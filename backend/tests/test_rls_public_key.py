@@ -7,16 +7,28 @@ Verifies that:
   4. Only whitelisted public directories (hospitals, departments) are readable.
 """
 import pytest
-from supabase import create_client
+try:
+    from supabase import create_client
+except ImportError:
+    create_client = None
+
 from app.config import get_settings
 
 
 @pytest.fixture(scope="module")
 def public_anon_client():
+    if create_client is None:
+        pytest.skip("supabase package not installed in environment; skipping live RLS test.")
     settings = get_settings()
     if not settings.supabase_url or not settings.supabase_anon_key:
         pytest.skip("Supabase URL and Anon key not configured; skipping live RLS test.")
-    return create_client(settings.supabase_url, settings.supabase_anon_key)
+    client = create_client(settings.supabase_url, settings.supabase_anon_key)
+    try:
+        client.table("hospitals").select("id").limit(1).execute()
+    except Exception as exc:
+        if "getaddrinfo failed" in str(exc).lower() or "connect" in str(exc).lower():
+            pytest.skip(f"Live Supabase network endpoint unreachable ({exc}); skipping live RLS test.")
+    return client
 
 
 def test_rls_public_anon_cannot_read_sensitive_tables(public_anon_client):

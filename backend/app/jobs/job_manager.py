@@ -65,7 +65,7 @@ class JobRecord:
                 "status": status.value,
                 "stage": stage_desc,
                 "progress": progress_pct,
-                "result": self.result.dict() if self.result else None,
+                "result": (self.result.model_dump() if hasattr(self.result, "model_dump") else self.result.dict()) if self.result else None,
                 "error_message": self.error,
             })
         except Exception:
@@ -87,11 +87,21 @@ class JobRecord:
 class JobManager:
     def __init__(self):
         self._jobs: Dict[str, JobRecord] = {}
+        self._idempotency_keys: Dict[str, str] = {}
 
-    def create_job(self) -> str:
+    def create_job(self, idempotency_key: Optional[str] = None) -> str:
+        """Create a new job record or return active job matching idempotency_key."""
+        if idempotency_key and idempotency_key in self._idempotency_keys:
+            existing_job_id = self._idempotency_keys[idempotency_key]
+            existing_job = self.get_job(existing_job_id)
+            if existing_job and existing_job.status != JobStatus.FAILED:
+                return existing_job_id
+
         job_id = f"job_{uuid.uuid4().hex[:12]}"
         rec = JobRecord(job_id)
         self._jobs[job_id] = rec
+        if idempotency_key:
+            self._idempotency_keys[idempotency_key] = job_id
         try:
             from app.db import save_pipeline_job
             save_pipeline_job(job_id, {
@@ -102,6 +112,14 @@ class JobManager:
         except Exception:
             pass
         return job_id
+
+    def get_job_by_idempotency_key(self, idempotency_key: str) -> Optional[JobRecord]:
+        if not idempotency_key:
+            return None
+        job_id = self._idempotency_keys.get(idempotency_key)
+        if job_id:
+            return self.get_job(job_id)
+        return None
 
     def get_job(self, job_id: str) -> Optional[JobRecord]:
         if job_id in self._jobs:
@@ -178,9 +196,15 @@ class JobManager:
                 )
                 assigned_doc_id = assigned_doc.get("id") if assigned_doc else None
 
+                stated_name = getattr(result.clinical_summary, "stated_patient_name", None) if result.clinical_summary else None
                 save_consultation(result.request_id, {
                     "account_id": patient_context.get("account_id"),
                     "profile_id": patient_context.get("profile_id"),
+                    "patient_name": patient_context.get("patient_name") or stated_name,
+                    "phone_number": patient_context.get("phone_number"),
+                    "age": patient_context.get("age"),
+                    "gender": patient_context.get("gender"),
+                    "stated_patient_name": stated_name,
                     "status": "triage",
                     "patient_language": result.patient_input.language,
                     "urgency_tier": result.priority.urgency_tier,
@@ -190,7 +214,9 @@ class JobManager:
                     "english_transcript": result.patient_input.transcript_english,
                     "complaint_category": complaint_cat,
                     "chief_complaint": result.clinical_summary.chief_complaint if result.clinical_summary else None,
-                    "full_result": result.dict(),
+                    "full_result": (result.model_dump() if hasattr(result, "model_dump") else result.dict()),
+                    "latitude": patient_context.get("latitude"),
+                    "longitude": patient_context.get("longitude"),
                 })
 
                 if assigned_doc_id:
@@ -239,6 +265,8 @@ class JobManager:
         expired = [jid for jid, j in self._jobs.items() if (now - j.updated_at) > ttl_seconds]
         for jid in expired:
             del self._jobs[jid]
+        active_ids = set(self._jobs.keys())
+        self._idempotency_keys = {k: v for k, v in self._idempotency_keys.items() if v in active_ids}
 
 
 _job_manager = JobManager()

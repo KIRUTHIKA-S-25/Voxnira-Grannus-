@@ -8,7 +8,7 @@ Endpoints:
 import os
 import logging
 import asyncio
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 
 from dotenv import load_dotenv
 
@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 import hashlib
 import time
 import uuid
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Depends, status, Security
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Response, Depends, status, Security
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -79,9 +79,24 @@ from app.voice_threads import get_voice_thread_manager
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rural_care.api")
 
+async def _periodic_retention_sweep_worker(interval_seconds: int = 3600):
+    """Background worker that periodically purges expired audio files (H4.2)."""
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            from app.security.data_retention import get_retention_manager
+            purged = get_retention_manager().execute_retention_sweep()
+            if purged:
+                logger.info("Periodic retention sweep purged %d files.", len(purged))
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.warning("Periodic retention sweep worker error: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Verify mandatory secrets and pre-load ML model at startup."""
+    """Verify mandatory secrets, pre-load ML model, and maintain retention sweeps."""
     settings = get_settings()
     if not settings.jwt_secret_key:
         raise RuntimeError("JWT_SECRET_KEY is mandatory and not configured. Backend refusing to start.")
@@ -103,7 +118,7 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("Failed to initialize ML model at startup: %s", exc)
 
-    # Statutory 24-hour audio retention sweep on startup
+    # Statutory audio retention sweep on startup
     try:
         from app.security.data_retention import get_retention_manager
         purged = get_retention_manager().execute_retention_sweep()
@@ -112,7 +127,11 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("Startup audio retention sweep error: %s", exc)
 
-    yield
+    sweep_task = asyncio.create_task(_periodic_retention_sweep_worker())
+    try:
+        yield
+    finally:
+        sweep_task.cancel()
 
 app = FastAPI(
     title="RuralCare AI — Medical Triage & Information Pipeline",
@@ -226,9 +245,11 @@ class OTPVerifyRequest(BaseModel):
 
 class GuestEmergencyRequest(BaseModel):
     guest_name: str
-    age: Optional[str] = None
+    age: Optional[Union[str, int]] = None
     gender: Optional[str] = None
     language_code: Optional[str] = "en-IN"
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 class GuestEmergencyResponse(BaseModel):
@@ -262,7 +283,7 @@ class LoginResponse(BaseModel):
 
 class PatientProfileCreate(BaseModel):
     full_name: str
-    age: Optional[str] = None
+    age: Optional[Union[str, int]] = None
     gender: Optional[str] = None
     relation: Optional[str] = "self"
     preferred_language: Optional[str] = "ta-IN"
@@ -270,6 +291,9 @@ class PatientProfileCreate(BaseModel):
     medications: Optional[List[str]] = None
     known_conditions: Optional[List[str]] = None
     pin: Optional[str] = None
+    guardian_name: Optional[str] = None
+    is_caregiver_managed: bool = False
+    caregiver_relationship: Optional[str] = None
 
 
 class ConsentRequest(BaseModel):
@@ -284,12 +308,17 @@ class ErasureRequest(BaseModel):
 
 
 @app.post("/api/v1/auth/otp/request", response_model=OTPRequestResponse)
-def request_phone_otp_endpoint(req: OTPRequest):
+def request_phone_otp_endpoint(
+    req: OTPRequest,
+    request: Request,
+):
     """
     Request 6-digit phone OTP for patient authentication (B2.2, H1.2).
     Enforces cooldown and 5-minute single-use expiration.
     Codes never appear in API responses, logs, or error payloads.
     """
+    from app.security.rate_limiter import rate_limit_otp_request
+    rate_limit_otp_request(request)
     from app.db import request_phone_otp
     success, message, _ = request_phone_otp(req.phone_number)
     if not success:
@@ -304,10 +333,10 @@ def request_phone_otp_endpoint(req: OTPRequest):
 
 
 @app.post("/api/v1/auth/otp/verify", response_model=LoginResponse)
-def verify_phone_otp_endpoint(req: OTPVerifyRequest):
+def verify_phone_otp_endpoint(req: OTPVerifyRequest, response: Response):
     """
     Verify phone OTP for patient session creation (B2.2).
-    Single-use, max 5 attempts.
+    Single-use, max 5 attempts. Sets httpOnly cookie (A4).
     """
     from app.db import verify_phone_otp
     success, message, account = verify_phone_otp(req.phone_number, req.otp_code)
@@ -328,6 +357,17 @@ def verify_phone_otp_endpoint(req: OTPVerifyRequest):
         account_id=account_id,
     )
 
+    is_prod = get_settings().env == "production"
+    response.set_cookie(
+        key="grannus_auth_token",
+        value=token,
+        httponly=True,
+        secure=is_prod,
+        samesite="lax",
+        path="/",
+        max_age=86400,
+    )
+
     get_audit_logger().log(
         action="AUTH_PATIENT_OTP_VERIFIED",
         user_id=user_id,
@@ -346,12 +386,13 @@ def verify_phone_otp_endpoint(req: OTPVerifyRequest):
 
 
 @app.post("/api/v1/auth/login", response_model=LoginResponse)
-async def login(req: LoginRequest):
+async def login(req: LoginRequest, response: Response):
     """
-    Authenticate staff (doctors, nurses, admins) with email and password,
+    Authenticate staff (doctors, nurses, admins) with email and password (A2),
     or verify credentials with medical registration number validation (B2.3).
+    Sets httpOnly session cookie (A4).
     """
-    from app.auth import validate_doctor_registration, authenticate_credentials, verify_token
+    from app.auth import validate_doctor_registration, verify_token
     from app.db import authenticate_staff_user, find_staff_user
 
     identifier = (req.email or req.user_id or "").strip()
@@ -382,26 +423,10 @@ async def login(req: LoginRequest):
         full_name = staff.get("full_name")
         hospital_id = staff.get("hospital_id")
     else:
-        if not req.password:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Password is required for staff account authentication.",
-            )
-        from app.auth import _REGISTERED_USERS
-        if identifier in _REGISTERED_USERS and authenticate_credentials(identifier, req.role or UserRole.DOCTOR, req.password):
-            reg = _REGISTERED_USERS[identifier]
-            role = UserRole(reg["role"])
-            user_id = identifier
-            doc_reg = reg.get("doctor_reg_no") or req.doctor_registration_number
-            state_council = reg.get("state_council") or req.state_medical_council
-            full_name = identifier
-            hospital_id = "c5b971d1-fe39-40bf-a5cb-539f1a98059f"
-            is_verified_doc = True
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials. Unregistered staff account.",
-            )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials. Unregistered staff account.",
+        )
 
     is_verified_doc = None
     if staff and role == UserRole.DOCTOR:
@@ -429,6 +454,17 @@ async def login(req: LoginRequest):
     )
     user = verify_token(token)
 
+    is_prod = get_settings().env == "production"
+    response.set_cookie(
+        key="grannus_auth_token",
+        value=token,
+        httponly=True,
+        secure=is_prod,
+        samesite="lax",
+        path="/",
+        max_age=86400,
+    )
+
     get_audit_logger().log(
         action="AUTH_LOGIN",
         user_id=user.user_id,
@@ -448,12 +484,18 @@ async def login(req: LoginRequest):
 
 
 @app.post("/api/v1/auth/guest-emergency", response_model=GuestEmergencyResponse)
-def guest_emergency_intake(req: GuestEmergencyRequest):
+def guest_emergency_intake(req: GuestEmergencyRequest, response: Response):
     """
     Emergency access without OTP (H1.3).
     Instant 'Call 108' triage screen appears on client, and the backend generates
     a secure single-case guest token alerting the hospital ER.
+    Sets httpOnly session cookie (A4).
     """
+    if req.latitude is not None and not (-90.0 <= req.latitude <= 90.0):
+        raise HTTPException(status_code=400, detail="Latitude must be between -90 and 90 degrees.")
+    if req.longitude is not None and not (-180.0 <= req.longitude <= 180.0):
+        raise HTTPException(status_code=400, detail="Longitude must be between -180 and 180 degrees.")
+
     clean_name = req.guest_name.strip()
     if len(clean_name) < 2:
         clean_name = "Emergency Patient"
@@ -469,6 +511,17 @@ def guest_emergency_intake(req: GuestEmergencyRequest):
         expires_in_seconds=7200,  # 2 hours
     )
 
+    is_prod = get_settings().env == "production"
+    response.set_cookie(
+        key="grannus_auth_token",
+        value=token,
+        httponly=True,
+        secure=is_prod,
+        samesite="lax",
+        path="/",
+        max_age=7200,
+    )
+
     from app.db import save_consultation, save_guest_case
     save_guest_case(case_id, {
         "id": case_id,
@@ -478,6 +531,8 @@ def guest_emergency_intake(req: GuestEmergencyRequest):
         "chief_complaint": f"Emergency Guest Walk-in / Intake: {clean_name}",
         "guest_token_hash": hashlib.sha256(token.encode()).hexdigest(),
         "status": "unverified",
+        "latitude": req.latitude,
+        "longitude": req.longitude,
     })
     save_consultation(case_id, {
         "id": case_id,
@@ -489,6 +544,8 @@ def guest_emergency_intake(req: GuestEmergencyRequest):
         "department_id": "GEN_MED",
         "is_guest_emergency": True,
         "guest_name": clean_name,
+        "latitude": req.latitude,
+        "longitude": req.longitude,
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
 
@@ -510,9 +567,9 @@ def guest_emergency_intake(req: GuestEmergencyRequest):
 
 
 @app.post("/api/v1/auth/refresh", response_model=LoginResponse)
-def refresh_session_token(current_user: AuthenticatedUser = Depends(get_current_user)):
+def refresh_session_token(response: Response, current_user: AuthenticatedUser = Depends(get_current_user)):
     """
-    Renew active session token (H1.4).
+    Renew active session token (H1.4) and update httpOnly cookie (A4).
     """
     new_token = create_token(
         user_id=current_user.user_id,
@@ -528,6 +585,18 @@ def refresh_session_token(current_user: AuthenticatedUser = Depends(get_current_
         guest_token=current_user.guest_token,
         expires_in_seconds=86400,
     )
+
+    is_prod = get_settings().env == "production"
+    response.set_cookie(
+        key="grannus_auth_token",
+        value=new_token,
+        httponly=True,
+        secure=is_prod,
+        samesite="lax",
+        path="/",
+        max_age=86400,
+    )
+
     return LoginResponse(
         token=new_token,
         user_id=current_user.user_id,
@@ -541,18 +610,80 @@ def refresh_session_token(current_user: AuthenticatedUser = Depends(get_current_
 
 @app.post("/api/v1/auth/logout")
 async def logout(
+    response: Response,
+    request: Request,
     current_user: AuthenticatedUser = Depends(get_current_user),
     auth: Optional[HTTPAuthorizationCredentials] = Security(security_bearer),
 ):
-    """Revoke active JWT token upon logout (B2.5)."""
+    """Revoke active JWT token upon logout and clear httpOnly session cookie (A4, B2.5)."""
+    token = None
     if auth and auth.credentials:
-        revoke_token(auth.credentials)
+        token = auth.credentials
+    elif request and request.cookies.get("grannus_auth_token"):
+        token = request.cookies.get("grannus_auth_token")
+
+    if token:
+        revoke_token(token)
+
+    response.delete_cookie(key="grannus_auth_token", path="/")
     get_audit_logger().log(
         action="AUTH_LOGOUT",
         user_id=current_user.user_id,
         role=current_user.role.value,
     )
     return {"status": "success", "message": "Logged out successfully. Session invalidated."}
+
+
+class CreateStaffRequest(BaseModel):
+    email: str
+    password: str
+    role: str = "doctor"
+    full_name: str
+    doctor_registration_number: Optional[str] = None
+    state_medical_council: Optional[str] = None
+    specialty: Optional[str] = None
+    department_code: Optional[str] = "GEN_MED"
+    languages: Optional[List[str]] = None
+
+
+@app.post("/api/v1/auth/admin/staff")
+def admin_create_staff(
+    req: CreateStaffRequest,
+    admin: AuthenticatedUser = Depends(require_role([UserRole.ADMIN])),
+):
+    """
+    Admin-only endpoint to register healthcare staff with unique PBKDF2 hashed passwords (A2).
+    """
+    from app.db import create_staff_user, find_staff_user
+    if find_staff_user(req.email):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Staff user with this email already exists.",
+        )
+    staff = create_staff_user(
+        email=req.email,
+        password=req.password,
+        role=req.role,
+        full_name=req.full_name,
+        doctor_registration_number=req.doctor_registration_number,
+        state_council=req.state_medical_council,
+        specialty=req.specialty,
+        department_code=req.department_code,
+        languages=req.languages,
+    )
+    get_audit_logger().log(
+        action="ADMIN_CREATED_STAFF",
+        user_id=admin.user_id,
+        role=admin.role.value,
+        details={"created_email": req.email, "role": req.role},
+    )
+    return {
+        "success": True,
+        "message": f"Staff user {req.email} created successfully.",
+        "id": staff["id"],
+        "email": staff["email"],
+        "role": staff["role"],
+    }
 
 
 @app.get("/api/v1/auth/me", response_model=AuthenticatedUser)
@@ -593,6 +724,14 @@ async def list_patient_consultations(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Forbidden: Guest emergency sessions cannot browse historical consultation lists.",
         )
+    if profile_id:
+        from app.db import get_patient_profile
+        prof = get_patient_profile(profile_id)
+        if prof and prof.get("account_id") and prof.get("account_id") != current_user.account_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden: Cannot access consultations of another patient profile.",
+            )
     from app.db import get_consultations_for_patient
     account_id = current_user.account_id
     consultations = get_consultations_for_patient(account_id=account_id, profile_id=profile_id)
@@ -614,7 +753,7 @@ async def create_patient_profile_endpoint(
             detail="Authenticated patient phone account required to register profiles.",
         )
     from app.db import create_patient_profile, hash_password
-    profile_data = req.dict(exclude={"pin"})
+    profile_data = req.model_dump(exclude={"pin"}) if hasattr(req, "model_dump") else req.dict(exclude={"pin"})
     if req.pin:
         profile_data["pin_hash"] = hash_password(req.pin)
 
@@ -693,6 +832,7 @@ def verify_profile_pin_endpoint(
 
 
 @app.post("/api/v1/patient/account/reset-recycled")
+@app.post("/api/v1/patient/reset-recycled-phone")
 def reset_recycled_account(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
@@ -702,6 +842,35 @@ def reset_recycled_account(
     from app.db import reset_recycled_phone_number
     reset_recycled_phone_number(current_user.account_id)
     return {"status": "success", "message": "Recycled phone number profile history reset successfully."}
+
+
+class PatientErasureRequest(BaseModel):
+    reason: Optional[str] = "Statutory erasure requested under DPDP Act 2023"
+
+
+@app.post("/api/v1/patient/account/erasure")
+def request_patient_data_erasure(
+    req: PatientErasureRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Statutory Right to Erasure under Section 12 of India DPDP Act 2023:
+      - Purges stored raw voice recordings.
+      - Anonymizes identifying consultation records.
+      - Logs action in deletion_log and preserves audit trail.
+    """
+    if current_user.role != UserRole.PATIENT:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Only patients can request statutory account erasure.",
+        )
+    from app.security.data_retention import get_retention_manager
+    res = get_retention_manager().process_patient_erasure(
+        patient_id=current_user.account_id or current_user.user_id,
+        reason=req.reason,
+        hospital_id=current_user.hospital_id,
+    )
+    return res
 
 
 @app.get("/api/v1/consent/notice")
@@ -792,25 +961,44 @@ def regulatory_positioning():
     return {
         "cdsco_declaration": CDSCO_SAMD_DECLARATION,
         "emergency_disclaimer": EMERGENCY_DISCLAIMER_TEXT,
-        "telemedicine_guidelines_compliant": True,
+        "telemedicine_guidelines_compliant": False,  # Pending formal counsel confirmation (B4)
     }
 
 
 @app.get("/api/v1/media/stream")
-def stream_media(file: str, expires: int, sig: str):
+def stream_media(
+    file: Optional[str] = None,
+    expires: Optional[int] = None,
+    sig: Optional[str] = None,
+    request: Request = None,
+    auth: Optional[HTTPAuthorizationCredentials] = Security(security_bearer),
+):
     """
     Access short-lived cryptographic signed media URL (prevents unauthorized public access).
+    Validates token or signature before parameter validation to return 401 on missing auth (C3).
     """
+    has_token = bool((auth and auth.credentials) or (request and request.cookies.get("grannus_auth_token")))
+    if not has_token and not sig:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication token or valid signature is required to access media stream.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not file or expires is None or not sig:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing required stream parameters (file, expires, sig).",
+        )
     if not verify_signed_url(file, expires, sig):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Signed media link is invalid or expired. Please re-authenticate.",
         )
-    # Block H4.7: If audio file has expired/deleted under 24h retention policy -> 404
+    # Block H4.7: If audio file has expired/deleted under retention policy -> 404
     if get_retention_manager().is_audio_purged(file) or not os.path.exists(file):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Audio recording has expired or been permanently deleted under the 24-hour statutory retention policy.",
+            detail="Audio recording has expired or been permanently deleted under the statutory retention policy.",
         )
     return {"status": "authorized", "file": file, "valid_until": expires}
 
@@ -833,6 +1021,7 @@ async def process_audio(
     known_conditions: str = Form(None, description="Optional pre-existing medical conditions"),
     current_medications: str = Form(None, description="Optional current medications"),
     profile_id: Optional[str] = Form(None, description="Optional patient profile ID (B4.2)"),
+    patient_name: Optional[str] = Form(None, description="Optional patient name"),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> PipelineResult:
     """
@@ -861,16 +1050,19 @@ async def process_audio(
     safe_filename = sanitize_filename(audio.filename)
     validate_audio_upload(audio_bytes, safe_filename, settings.max_audio_bytes)
 
-    # 3. Schedule raw audio deletion under 24-hour retention policy (H4.1)
-    get_retention_manager().schedule_audio_deletion(safe_filename, hours=24)
+    # 3. Schedule raw audio deletion under temporary retention policy (default 72h)
+    get_retention_manager().schedule_audio_deletion(safe_filename, hours=settings.audio_retention_hours)
 
     # Resolve patient phone account linkage (B4.2)
     resolved_account_id = None
+    patient_phone = None
     if profile_id:
         from app.db import get_patient_profile
         prof = get_patient_profile(profile_id)
         if prof:
             resolved_account_id = prof.get("account_id")
+            if not patient_name:
+                patient_name = prof.get("full_name")
 
     auth_header = request.headers.get("Authorization")
     if not resolved_account_id and auth_header and auth_header.startswith("Bearer "):
@@ -882,7 +1074,15 @@ async def process_audio(
         except Exception:
             pass
 
+    if resolved_account_id:
+        from app.db import get_patient_account_by_id
+        acc = get_patient_account_by_id(resolved_account_id)
+        if acc:
+            patient_phone = acc.get("phone_number")
+
     patient_context = {
+        "patient_name": patient_name,
+        "phone_number": patient_phone,
         "age": age,
         "gender": gender,
         "reported_duration": reported_duration,
@@ -921,9 +1121,15 @@ async def process_audio(
             )
             assigned_doc_id = assigned_doc.get("id") if assigned_doc else None
 
+            stated_name = getattr(result.clinical_summary, "stated_patient_name", None) if result.clinical_summary else None
             save_consultation(result.request_id, {
                 "account_id": patient_context.get("account_id"),
                 "profile_id": patient_context.get("profile_id"),
+                "patient_name": patient_context.get("patient_name") or stated_name,
+                "phone_number": patient_context.get("phone_number"),
+                "age": patient_context.get("age"),
+                "gender": patient_context.get("gender"),
+                "stated_patient_name": stated_name,
                 "status": "triage",
                 "patient_language": result.patient_input.language,
                 "urgency_tier": result.priority.urgency_tier,
@@ -933,7 +1139,7 @@ async def process_audio(
                 "english_transcript": result.patient_input.transcript_english,
                 "complaint_category": complaint_cat,
                 "chief_complaint": result.clinical_summary.chief_complaint if result.clinical_summary else None,
-                "full_result": result.dict(),
+                "full_result": result.model_dump() if hasattr(result, "model_dump") else result.dict(),
             })
 
             if assigned_doc_id:
@@ -1164,6 +1370,9 @@ async def submit_audio_async(
     known_conditions: str = Form(None),
     current_medications: str = Form(None),
     profile_id: Optional[str] = Form(None),
+    patient_name: Optional[str] = Form(None),
+    latitude: Optional[float] = Form(None),
+    longitude: Optional[float] = Form(None),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
@@ -1171,6 +1380,11 @@ async def submit_audio_async(
     Requires authentication (H3.5).
     """
     await rate_limit_patient_intake(request)
+
+    if latitude is not None and not (-90.0 <= latitude <= 90.0):
+        raise HTTPException(status_code=400, detail="Latitude must be between -90 and 90 degrees.")
+    if longitude is not None and not (-180.0 <= longitude <= 180.0):
+        raise HTTPException(status_code=400, detail="Longitude must be between -180 and 180 degrees.")
 
     settings = get_settings()
     if not settings.sarvam_api_key or not settings.gemini_api_key:
@@ -1183,34 +1397,60 @@ async def submit_audio_async(
     safe_filename = sanitize_filename(audio.filename)
     validate_audio_upload(audio_bytes, safe_filename, settings.max_audio_bytes)
 
-    # Schedule raw audio deletion under 24-hour retention policy (H4.1)
-    get_retention_manager().schedule_audio_deletion(safe_filename, hours=24)
+    # Schedule raw audio deletion under temporary retention policy (default 72h)
+    get_retention_manager().schedule_audio_deletion(safe_filename, hours=settings.audio_retention_hours)
+
+    patient_phone = None
+    if current_user.account_id:
+        from app.db import get_patient_account_by_id
+        acc = get_patient_account_by_id(current_user.account_id)
+        if acc:
+            patient_phone = acc.get("phone_number")
+
+    if profile_id and not patient_name:
+        from app.db import get_patient_profile
+        prof = get_patient_profile(profile_id)
+        if prof and prof.get("full_name"):
+            patient_name = prof.get("full_name")
 
     patient_context = {
+        "patient_name": patient_name,
+        "phone_number": patient_phone,
         "age": age,
         "gender": gender,
         "reported_duration": reported_duration,
         "known_conditions": known_conditions,
         "current_medications": current_medications,
         "profile_id": profile_id,
+        "latitude": latitude,
+        "longitude": longitude,
         "account_id": current_user.account_id,
         "user_id": current_user.user_id,
+        "is_guest_emergency": current_user.role == UserRole.GUEST_EMERGENCY,
     }
 
+    idempotency_key = request.headers.get("x-idempotency-key")
     job_mgr = get_job_manager()
-    job_id = job_mgr.create_job()
+    existing_job = job_mgr.get_job_by_idempotency_key(idempotency_key) if idempotency_key else None
+    if existing_job and existing_job.status.value != "FAILED":
+        job_id = existing_job.job_id
+        is_new = False
+    else:
+        job_id = job_mgr.create_job(idempotency_key=idempotency_key)
+        is_new = True
 
-    # Dispatch to background task worker
-    asyncio.create_task(
-        job_mgr.execute_job(
-            job_id=job_id,
-            audio_bytes=audio_bytes,
-            filename=safe_filename,
-            language_code=language_code,
-            patient_context=patient_context,
-            doctor_preferred_language=doctor_preferred_language,
+    # Dispatch to background task worker if new
+    if is_new:
+        asyncio.create_task(
+            job_mgr.execute_job(
+                job_id=job_id,
+                audio_bytes=audio_bytes,
+                filename=safe_filename,
+                language_code=language_code,
+                patient_context=patient_context,
+                doctor_preferred_language=doctor_preferred_language,
+            )
         )
-    )
 
     return {
         "job_id": job_id,
@@ -1484,6 +1724,7 @@ def run_demo_sample_case(
 
 
 @app.get("/api/v1/consultations/{consultation_id}/thread", response_model=VoiceThread)
+@app.get("/api/v1/consultations/{consultation_id}/voice-thread", response_model=VoiceThread)
 def get_consultation_voice_thread(
     consultation_id: str,
     current_user: AuthenticatedUser = Depends(get_current_user),
@@ -1894,4 +2135,34 @@ def trigger_unclaimed_escalations(
         "count": len(escalations),
         "escalations": escalations,
     }
+
+
+# -----------------------------------------------------------------------------
+# Data Retention & Statutory Erasure (H4.1 - H4.7)
+# -----------------------------------------------------------------------------
+
+@app.post("/api/v1/admin/retention/sweep")
+def trigger_admin_retention_sweep(
+    current_admin: AuthenticatedUser = Depends(require_role([UserRole.ADMIN])),
+):
+    """Admin-only endpoint to trigger an immediate statutory audio retention sweep (H4.2)."""
+    from app.security.data_retention import get_retention_manager
+    purged = get_retention_manager().execute_retention_sweep()
+    return {
+        "status": "success",
+        "purged_count": len(purged),
+        "purged_files": purged,
+        "message": f"Statutory retention sweep completed. Purged {len(purged)} expired audio files.",
+    }
+
+
+@app.get("/api/v1/admin/retention/status")
+def get_admin_retention_status(
+    current_user: AuthenticatedUser = Depends(require_role([UserRole.ADMIN, UserRole.DOCTOR, UserRole.NURSE])),
+):
+    """Retrieve current operational status of data retention and audio queues."""
+    from app.security.data_retention import get_retention_manager
+    status_data = get_retention_manager().get_retention_status()
+    return status_data
+
 

@@ -186,7 +186,9 @@ DEV_TEST_NUMBERS = {
 def normalize_phone(phone: str) -> str:
     cleaned = phone.strip().replace(" ", "").replace("-", "")
     if not cleaned.startswith("+"):
-        if len(cleaned) == 10:
+        if cleaned.startswith("0") and len(cleaned) == 11:
+            cleaned = f"+91{cleaned[1:]}"
+        elif len(cleaned) == 10:
             cleaned = f"+91{cleaned}"
         elif cleaned.startswith("91") and len(cleaned) == 12:
             cleaned = f"+{cleaned}"
@@ -371,6 +373,23 @@ def _get_or_create_account_db(phone_norm: str) -> dict:
     return new_acc
 
 
+def get_patient_account_by_id(account_id: str) -> Optional[dict]:
+    """Retrieve patient account by ID from Supabase or in-memory store."""
+    client = get_supabase_client()
+    if client and _safe_uuid_or_none(account_id):
+        try:
+            res = client.table("accounts").select("*").eq("id", account_id).execute()
+            if res.data:
+                return res.data[0]
+        except Exception as exc:
+            logger.error("Supabase get_patient_account_by_id error: %s", exc)
+
+    for acc in _MEM_ACCOUNTS.values():
+        if acc.get("id") == account_id:
+            return acc
+    return None
+
+
 # -----------------------------------------------------------------------------
 # Patient Profiles (B4.1 - Multi-profile per phone account)
 # -----------------------------------------------------------------------------
@@ -401,6 +420,9 @@ def create_patient_profile(account_id: str, profile_data: dict) -> dict:
         "medications": profile_data.get("medications", []),
         "known_conditions": profile_data.get("known_conditions", []),
         "pin_hash": profile_data.get("pin_hash"),
+        "guardian_name": profile_data.get("guardian_name"),
+        "is_caregiver_managed": bool(profile_data.get("is_caregiver_managed", False)),
+        "caregiver_relationship": profile_data.get("caregiver_relationship"),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -456,7 +478,7 @@ _FALLBACK_STAFF = {
     "dr.priya@hospital.in": {
         "id": "11111111-0002-0000-0000-000000000002",
         "email": "dr.priya@hospital.in",
-        "password_hash": hash_password("grannus_secure_doctor_2026"),
+        "password_hash": hash_password("grannus_priya_dm_2026!"),
         "role": "doctor",
         "full_name": "Dr. Priya Sundaram, DM",
         "doctor_registration_number": "TNMC-54321",
@@ -474,7 +496,7 @@ _FALLBACK_STAFF = {
     "dr.vikram@hospital.in": {
         "id": "11111111-0003-0000-0000-000000000003",
         "email": "dr.vikram@hospital.in",
-        "password_hash": hash_password("grannus_secure_doctor_2026"),
+        "password_hash": hash_password("grannus_vikram_peds_2026!"),
         "role": "doctor",
         "full_name": "Dr. Vikram Patel, MD",
         "doctor_registration_number": "GMC-39104",
@@ -492,7 +514,7 @@ _FALLBACK_STAFF = {
     "dr.shalini@hospital.in": {
         "id": "11111111-0004-0000-0000-000000000004",
         "email": "dr.shalini@hospital.in",
-        "password_hash": hash_password("grannus_secure_doctor_2026"),
+        "password_hash": hash_password("grannus_shalini_derm_2026!"),
         "role": "doctor",
         "full_name": "Dr. Shalini Reddy, MD",
         "doctor_registration_number": "APMC-28491",
@@ -510,7 +532,7 @@ _FALLBACK_STAFF = {
     "dr.meenakshi@hospital.in": {
         "id": "11111111-0005-0000-0000-000000000005",
         "email": "dr.meenakshi@hospital.in",
-        "password_hash": hash_password("grannus_secure_doctor_2026"),
+        "password_hash": hash_password("grannus_meenakshi_obgyn_2026!"),
         "role": "doctor",
         "full_name": "Dr. Meenakshi Iyer, MS",
         "doctor_registration_number": "TNMC-61245",
@@ -528,7 +550,7 @@ _FALLBACK_STAFF = {
     "dr.arvind@hospital.in": {
         "id": "11111111-0006-0000-0000-000000000006",
         "email": "dr.arvind@hospital.in",
-        "password_hash": hash_password("grannus_secure_doctor_2026"),
+        "password_hash": hash_password("grannus_arvind_ortho_2026!"),
         "role": "doctor",
         "full_name": "Dr. Arvind Kumar, MS",
         "doctor_registration_number": "DMC-50123",
@@ -546,7 +568,7 @@ _FALLBACK_STAFF = {
     "dr.suresh@hospital.in": {
         "id": "11111111-0007-0000-0000-000000000007",
         "email": "dr.suresh@hospital.in",
-        "password_hash": hash_password("grannus_secure_doctor_2026"),
+        "password_hash": hash_password("grannus_suresh_ent_2026!"),
         "role": "doctor",
         "full_name": "Dr. Suresh Varma, MS",
         "doctor_registration_number": "TSMC-33109",
@@ -564,7 +586,7 @@ _FALLBACK_STAFF = {
     "dr.harish@hospital.in": {
         "id": "11111111-0008-0000-0000-000000000008",
         "email": "dr.harish@hospital.in",
-        "password_hash": hash_password("grannus_secure_doctor_2026"),
+        "password_hash": hash_password("grannus_harish_er_2026!"),
         "role": "doctor",
         "full_name": "Dr. Harish Naidu, MBBS",
         "doctor_registration_number": "TNMC-72019",
@@ -581,10 +603,10 @@ _FALLBACK_STAFF = {
     },
     "dr_clinician": {
         "id": "doc_clinician_002",
-        "email": "dr.rajan@hospital.in",
-        "password_hash": hash_password("grannus_secure_doctor_2026"),
+        "email": "dr.clinician@hospital.in",
+        "password_hash": hash_password("grannus_clinician_lab_2026!"),
         "role": "doctor",
-        "full_name": "Dr. Rajan K., MD",
+        "full_name": "Dr. Clinician Lab Specialist",
         "doctor_registration_number": "TNMC-48291",
         "state_council": "Tamil Nadu Medical Council",
         "specialty": "General Medicine",
@@ -596,6 +618,15 @@ _FALLBACK_STAFF = {
         "max_capacity": 20,
         "weekly_schedule": {"mon_fri": "09:00-17:00"},
         "is_verified_doctor": True,
+    },
+    "admin_user": {
+        "id": "admin_sys_002",
+        "email": "admin_user@hospital.in",
+        "password_hash": hash_password("grannus_admin_user_2026!"),
+        "role": "admin",
+        "full_name": "System Administrator",
+        "is_active": True,
+        "is_on_duty": True,
     },
     "admin@hospital.in": {
         "id": "admin_sys_001",
@@ -634,6 +665,53 @@ def find_staff_user(email: str) -> Optional[dict]:
         if user["email"].lower() == email_clean or user_key.lower() == email_clean:
             return user
     return None
+
+
+def create_staff_user(
+    email: str,
+    password: str,
+    role: str = "doctor",
+    full_name: str = "",
+    doctor_registration_number: Optional[str] = None,
+    state_council: Optional[str] = None,
+    specialty: Optional[str] = None,
+    department_code: Optional[str] = "GEN_MED",
+    languages: Optional[List[str]] = None,
+    hospital_id: Optional[str] = None,
+) -> dict:
+    """
+    Create a new staff user with a unique, admin-created PBKDF2 salt-hashed password (A2).
+    Stored in database staff_users table, with fallback to in-memory store in development.
+    """
+    email_clean = email.strip().lower()
+    pw_hash = hash_password(password)
+    user_id = str(uuid.uuid4())
+    record = {
+        "id": user_id,
+        "email": email_clean,
+        "password_hash": pw_hash,
+        "role": role,
+        "full_name": full_name or email_clean,
+        "doctor_registration_number": doctor_registration_number,
+        "state_council": state_council,
+        "specialty": specialty or "General Medicine",
+        "department_code": department_code or "GEN_MED",
+        "languages": languages or ["ta", "en", "hi"],
+        "hospital_id": hospital_id or "c5b971d1-fe39-40bf-a5cb-539f1a98059f",
+        "is_active": True,
+        "is_on_duty": True,
+        "is_verified_doctor": bool(doctor_registration_number),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    client = get_supabase_client()
+    if client:
+        try:
+            client.table("staff_users").upsert(record).execute()
+        except Exception as exc:
+            logger.error("Failed to insert staff user into Supabase: %s", exc)
+
+    _FALLBACK_STAFF[email_clean] = record
+    return record
 
 
 _STAFF_FAILED_ATTEMPTS: Dict[str, Tuple[int, float]] = {}
@@ -859,8 +937,14 @@ def save_guest_case(case_id: str, case_data: dict) -> dict:
         "guest_token_hash": case_data.get("guest_token_hash", ""),
         "status": case_data.get("status", "unverified"),
         "hospital_id": h_id,
+        "latitude": case_data.get("latitude"),
+        "longitude": case_data.get("longitude"),
         "created_at": case_data.get("created_at", datetime.now(timezone.utc).isoformat()),
     }
+
+    for k, v in case_data.items():
+        if k not in record:
+            record[k] = v
     client = get_supabase_client()
     if client:
         try:
@@ -1049,25 +1133,32 @@ def erase_account_data(account_id: str, reason: str = "Statutory erasure under D
 
 
 def reset_recycled_phone_number(account_id: str) -> bool:
-    """Disassociate all prior profiles from recycled phone number (B4.4)."""
+    """Disassociate all prior profiles and consultations from recycled phone number (B4.4)."""
     client = get_supabase_client()
     if client:
         try:
             client.table("patient_profiles").delete().eq("account_id", account_id).execute()
+            client.table("consultations").update({"account_id": None, "recycled_disassociated": True}).eq("account_id", account_id).execute()
         except Exception:
             pass
 
-    # In-memory reset
+    # In-memory reset: delete profiles
     to_delete = [pid for pid, p in _MEM_PROFILES.items() if p.get("account_id") == account_id]
     for pid in to_delete:
         del _MEM_PROFILES[pid]
+
+    # In-memory reset: disassociate previous consultations
+    for cid, c in _MEM_CONSULTATIONS.items():
+        if c.get("account_id") == account_id:
+            c["account_id"] = None
+            c["recycled_disassociated"] = True
 
     append_audit_log_entry(
         action="RECYCLED_NUMBER_RESET",
         user_id=account_id,
         role="patient",
         resource_id=account_id,
-        details={"message": "All prior profiles cleared for recycled phone number."},
+        details={"message": "All prior profiles cleared and consultations disassociated for recycled phone number."},
     )
     return True
 
@@ -1091,29 +1182,81 @@ def save_consultation(consultation_id: str, data: dict) -> dict:
     phone = data.get("phone_number") or ""
     h_id = _safe_uuid_or_none(data.get("hospital_id")) or "c5b971d1-fe39-40bf-a5cb-539f1a98059f"
 
+    prof_id = data.get("profile_id")
+    acc_id = data.get("account_id")
+    p_name = data.get("patient_name") or data.get("guest_name") or ""
+    age = data.get("age")
+    gender = data.get("gender")
+
+    if prof_id:
+        prof = get_patient_profile(prof_id)
+        if prof:
+            if not p_name:
+                p_name = prof.get("full_name") or ""
+            if not age:
+                age = prof.get("age")
+            if not gender:
+                gender = prof.get("gender")
+
+    if not phone and acc_id:
+        acc = get_patient_account_by_id(acc_id)
+        if acc:
+            phone = acc.get("phone_number") or ""
+
+    stated_name = data.get("stated_patient_name")
+    if not stated_name and isinstance(data.get("full_result"), dict):
+        cs = data["full_result"].get("clinical_summary") or {}
+        if isinstance(cs, dict):
+            stated_name = cs.get("stated_patient_name")
+
+    if not p_name:
+        if stated_name:
+            p_name = stated_name
+        elif data.get("urgency_tier") == "emergency" or data.get("is_guest_emergency"):
+            p_name = "Emergency Patient"
+        else:
+            p_name = "Patient"
+
     record = {
         "id": consultation_id,
         "hospital_id": h_id,
-        "account_id": data.get("account_id"),
-        "profile_id": data.get("profile_id"),
+        "account_id": acc_id,
+        "profile_id": prof_id,
         "patient_id": data.get("patient_id"),
+        "patient_name": p_name,
+        "guest_name": p_name,
+        "phone_number": phone,
+        "age": age,
+        "gender": gender,
+        "stated_patient_name": stated_name,
         "status": data.get("status", "triage"),
         "patient_language": data.get("patient_language", "en-IN"),
         "urgency_tier": data.get("urgency_tier", "doctor_soon"),
         "department_id": _safe_uuid_or_none(data.get("department_id")),
-        "assigned_doctor_id": _safe_uuid_or_none(data.get("assigned_doctor_id")),
+        "assigned_doctor_id": data.get("assigned_doctor_id"),
         "original_transcript": orig_tx,
         "transcript_original": orig_tx,
         "english_transcript": eng_tx,
         "transcript_english": eng_tx,
-        "phone_number": phone,
         "audio_url": data.get("audio_url", ""),
         "complaint_category": data.get("complaint_category"),
         "chief_complaint": data.get("chief_complaint"),
         "full_result": data.get("full_result"),
+        "prescriptions": data.get("prescriptions", []),
+        "prescribed_by": data.get("prescribed_by"),
+        "doctor_registration_number": data.get("doctor_registration_number"),
+        "prescription_timestamp": data.get("prescription_timestamp"),
+        "referral_hospital": data.get("referral_hospital"),
+        "latitude": data.get("latitude"),
+        "longitude": data.get("longitude"),
         "created_at": data.get("created_at", now_iso),
         "updated_at": now_iso,
     }
+
+    # Preserve any additional dynamic properties
+    for k, v in data.items():
+        if k not in record:
+            record[k] = v
 
     client = get_supabase_client()
     if client and _safe_uuid_or_none(consultation_id):
@@ -1177,10 +1320,10 @@ def get_consultations_for_patient(
     if client and can_query_supabase:
         try:
             query = client.table("consultations").select("*")
+            if account_id:
+                query = query.eq("account_id", account_id)
             if profile_id:
                 query = query.eq("profile_id", profile_id)
-            elif account_id:
-                query = query.eq("account_id", account_id)
             res = query.order("created_at", desc=True).execute()
             if res.data:
                 return res.data
@@ -1188,7 +1331,9 @@ def get_consultations_for_patient(
             logger.error("Supabase get_consultations_for_patient error: %s", exc)
 
     items = list(_MEM_CONSULTATIONS.values())
-    if profile_id:
+    if account_id and profile_id:
+        items = [c for c in items if c.get("account_id") == account_id and c.get("profile_id") == profile_id]
+    elif profile_id:
         items = [c for c in items if c.get("profile_id") == profile_id]
     elif account_id:
         items = [c for c in items if c.get("account_id") == account_id]
@@ -1247,21 +1392,36 @@ def list_consultations_for_queue(
         ]
 
     # Attach current assignment lock status for each case
+    now_utc = datetime.now(timezone.utc)
     for c in results:
         cid = c["id"]
         assignment = get_assignment_for_consultation(cid)
         if assignment:
+            is_claimed = assignment.get("status") == "claimed"
+            lock_exp = assignment.get("lock_expires_at")
+            if is_claimed and lock_exp:
+                try:
+                    exp_dt = datetime.fromisoformat(lock_exp)
+                    if exp_dt.tzinfo is None:
+                        exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                    if exp_dt < now_utc:
+                        is_claimed = False
+                except Exception:
+                    pass
             c["assignment"] = assignment
-            c["is_claimed"] = assignment.get("status") == "claimed"
-            c["claimed_by_id"] = assignment.get("doctor_id")
-            c["claimed_by_name"] = assignment.get("locked_by_name")
-            c["lock_expires_at"] = assignment.get("lock_expires_at")
+            c["is_claimed"] = is_claimed
+            c["claimed_by_id"] = assignment.get("doctor_id") if is_claimed else None
+            c["claimed_by_name"] = assignment.get("locked_by_name") if is_claimed else None
+            c["lock_expires_at"] = lock_exp
         else:
             c["assignment"] = None
             c["is_claimed"] = False
             c["claimed_by_id"] = None
             c["claimed_by_name"] = None
             c["lock_expires_at"] = None
+
+        if not c.get("patient_name"):
+            c["patient_name"] = c.get("guest_name") or ("Emergency Patient" if c.get("urgency_tier") == "emergency" else "Patient")
 
     # Sort urgent-first: emergency (0) > doctor_today (1) > doctor_soon (2) > self_care (3)
     results.sort(
@@ -1350,6 +1510,8 @@ def claim_consultation_lock(
         if lock_expires_at_str:
             try:
                 exp_dt = datetime.fromisoformat(lock_expires_at_str)
+                if exp_dt.tzinfo is None:
+                    exp_dt = exp_dt.replace(tzinfo=timezone.utc)
                 if exp_dt < now:
                     is_lock_active = False
             except Exception:

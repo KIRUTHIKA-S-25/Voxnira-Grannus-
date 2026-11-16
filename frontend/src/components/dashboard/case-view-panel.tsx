@@ -11,11 +11,15 @@ import {
   releaseConsultationCase,
   reassignConsultationCase,
   overrideUrgencyTier,
+  recordConsultationAction,
+  PrescriptionItem,
 } from '@/lib/api';
 import {
   ShieldAlert,
   Lock,
   Unlock,
+  User,
+  Phone,
   UserCheck,
   Languages,
   AlertTriangle,
@@ -26,6 +30,9 @@ import {
   Sparkles,
   FileText,
   Volume2,
+  Pill,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -55,6 +62,14 @@ export function CaseViewPanel({
   const [showOverrideModal, setShowOverrideModal] = useState(false);
   const [newTier, setNewTier] = useState('doctor_today');
   const [overrideReason, setOverrideReason] = useState('');
+
+  // Prescription modal state
+  const [showPrescriptionModal, setShowPrescriptionModal] = useState(false);
+  const [prescriptionNotes, setPrescriptionNotes] = useState('');
+  const [prescriptionsList, setPrescriptionsList] = useState<PrescriptionItem[]>([
+    { medication_name: '', dosage: '', frequency: '', duration: '', instructions: '' },
+  ]);
+  const [isSubmittingPrescription, setIsSubmittingPrescription] = useState(false);
 
   if (!consultation) {
     return (
@@ -140,6 +155,58 @@ export function CaseViewPanel({
     }
   };
 
+  const handleAddMedication = () => {
+    setPrescriptionsList([
+      ...prescriptionsList,
+      { medication_name: '', dosage: '', frequency: '', duration: '', instructions: '' },
+    ]);
+  };
+
+  const handleRemoveMedication = (index: number) => {
+    if (prescriptionsList.length > 1) {
+      setPrescriptionsList(prescriptionsList.filter((_, i) => i !== index));
+    }
+  };
+
+  const handleUpdateMedication = (index: number, field: keyof PrescriptionItem, val: string) => {
+    const updated = [...prescriptionsList];
+    updated[index] = { ...updated[index], [field]: val };
+    setPrescriptionsList(updated);
+  };
+
+  const handlePrescriptionSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const validItems = prescriptionsList.filter((p) => p.medication_name && p.medication_name.trim());
+    if (validItems.length === 0) {
+      setActionError('Please specify at least one medication with a valid name.');
+      return;
+    }
+    for (const item of validItems) {
+      if (!item.dosage.trim() || !item.frequency.trim() || !item.duration.trim()) {
+        setActionError(`Medication "${item.medication_name}" is missing dosage, frequency, or duration.`);
+        return;
+      }
+    }
+
+    setIsSubmittingPrescription(true);
+    setActionError(null);
+    try {
+      await recordConsultationAction({
+        consultation_id: consultation.id,
+        action_type: 'PRESCRIBE_MEDICATION',
+        clinical_notes: prescriptionNotes.trim() || 'Prescription authorized by attending clinician.',
+        prescriptions: validItems,
+      });
+      setShowPrescriptionModal(false);
+      setActionSuccess('Prescription approved and linked to patient record.');
+      onUpdate();
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to approve prescription.');
+    } finally {
+      setIsSubmittingPrescription(false);
+    }
+  };
+
   return (
     <div className="bg-card border border-border rounded-2xl p-6 shadow-sm space-y-6 animate-gentle-fade-in">
       {/* Top Header & Urgency */}
@@ -173,6 +240,35 @@ export function CaseViewPanel({
               Complaint Category: <span className="font-semibold text-foreground">{consultation.complaint_category.replace('_', ' ')}</span>
             </p>
           )}
+
+          {/* Patient Profile Bar */}
+          <div className="flex items-center gap-3 flex-wrap mt-2.5 text-xs text-muted-foreground bg-muted/40 px-3 py-1.5 rounded-lg border border-border/50">
+            <span className="flex items-center gap-1 font-semibold text-foreground">
+              <User className="w-3.5 h-3.5 text-primary" />
+              {consultation.patient_name || consultation.guest_name || res.clinical_summary?.stated_patient_name || 'Patient'}
+            </span>
+            {res.clinical_summary?.stated_patient_name && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] bg-primary/10 text-primary font-medium">
+                Voice Name: {res.clinical_summary.stated_patient_name}
+              </span>
+            )}
+            {consultation.phone_number && (
+              <span className="flex items-center gap-1">
+                <Phone className="w-3.5 h-3.5" />
+                {consultation.phone_number}
+              </span>
+            )}
+            {(consultation.age || consultation.gender) && (
+              <span>
+                {[consultation.age ? `${consultation.age} yrs` : null, consultation.gender].filter(Boolean).join(' • ')}
+              </span>
+            )}
+            {consultation.department_id && (
+              <span className="bg-primary/10 text-primary px-2 py-0.5 rounded font-medium">
+                Dept: {consultation.department_id}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Claim status & Locking controls (B5.4) */}
@@ -310,6 +406,36 @@ export function CaseViewPanel({
         </div>
       )}
 
+      {/* Approved Prescriptions */}
+      {consultation.prescriptions && consultation.prescriptions.length > 0 && (
+        <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-bold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
+              <Pill className="w-4 h-4 text-emerald-600" /> Authorized Prescription
+            </h4>
+            {consultation.doctor_registration_number && (
+              <span className="text-[10px] bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full font-mono">
+                RMP Reg: {consultation.doctor_registration_number}
+              </span>
+            )}
+          </div>
+          <div className="divide-y divide-emerald-500/20">
+            {consultation.prescriptions.map((p: any, idx: number) => (
+              <div key={idx} className="py-2 first:pt-0 last:pb-0 flex flex-col sm:flex-row sm:items-center justify-between text-xs gap-1">
+                <div>
+                  <span className="font-semibold text-foreground">{p.medication_name}</span>
+                  <span className="text-muted-foreground ml-2">({p.dosage})</span>
+                  {p.instructions && <p className="text-[11px] text-muted-foreground italic mt-0.5">{p.instructions}</p>}
+                </div>
+                <div className="text-muted-foreground font-mono text-[11px]">
+                  <span>{p.frequency}</span> • <span>{p.duration}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Acoustic Biomarkers (Advisory only) */}
       {res.acoustic_biomarkers && (
         <div className="pt-2">
@@ -319,6 +445,15 @@ export function CaseViewPanel({
 
       {/* Doctor Action Controls: Re-route, Override Tier, Request More Info (F3.5) */}
       <div className="pt-4 border-t border-border flex flex-wrap gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setShowPrescriptionModal(true)}
+          className="text-xs rounded-full gap-1.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10"
+        >
+          <Pill className="w-3.5 h-3.5" /> Prescribe Medication
+        </Button>
+
         <Button
           variant="outline"
           size="sm"
@@ -339,6 +474,117 @@ export function CaseViewPanel({
 
         {res && <FhirExportButton result={res} />}
       </div>
+
+      {/* Prescribe Medication Modal */}
+      {showPrescriptionModal && (
+        <form onSubmit={handlePrescriptionSubmit} className="p-4 bg-muted/40 border border-border rounded-xl space-y-4">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5">
+              <Pill className="w-4 h-4 text-emerald-600" /> Issue Prescription (Telemedicine Practice Guidelines 2020)
+            </h4>
+            <span className="text-[11px] text-muted-foreground">
+              Doctor: {currentUser?.full_name || currentUser?.user_id}
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {prescriptionsList.map((item, idx) => (
+              <div key={idx} className="p-3 bg-card border border-border rounded-lg space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-muted-foreground uppercase">
+                    Medication #{idx + 1}
+                  </span>
+                  {prescriptionsList.length > 1 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleRemoveMedication(idx)}
+                      className="h-6 w-6 p-0 text-destructive hover:bg-destructive/10"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <Input
+                    placeholder="Medication name (e.g. Paracetamol)"
+                    value={item.medication_name}
+                    onChange={(e) => handleUpdateMedication(idx, 'medication_name', e.target.value)}
+                    className="text-xs bg-muted/30"
+                    required
+                  />
+                  <Input
+                    placeholder="Dosage (e.g. 500mg)"
+                    value={item.dosage}
+                    onChange={(e) => handleUpdateMedication(idx, 'dosage', e.target.value)}
+                    className="text-xs bg-muted/30"
+                    required
+                  />
+                  <Input
+                    placeholder="Frequency (e.g. 1-0-1 or Twice daily)"
+                    value={item.frequency}
+                    onChange={(e) => handleUpdateMedication(idx, 'frequency', e.target.value)}
+                    className="text-xs bg-muted/30"
+                    required
+                  />
+                  <Input
+                    placeholder="Duration (e.g. 5 days)"
+                    value={item.duration}
+                    onChange={(e) => handleUpdateMedication(idx, 'duration', e.target.value)}
+                    className="text-xs bg-muted/30"
+                    required
+                  />
+                </div>
+                <Input
+                  placeholder="Special instructions (e.g. Take after food with warm water)"
+                  value={item.instructions || ''}
+                  onChange={(e) => handleUpdateMedication(idx, 'instructions', e.target.value)}
+                  className="text-xs bg-muted/30"
+                />
+              </div>
+            ))}
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleAddMedication}
+              className="text-xs w-full gap-1 border-dashed"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add Another Medication
+            </Button>
+          </div>
+
+          <Input
+            placeholder="Attending doctor's clinical rationale & diagnosis notes..."
+            value={prescriptionNotes}
+            onChange={(e) => setPrescriptionNotes(e.target.value)}
+            className="text-xs bg-card"
+          />
+
+          <div className="flex gap-2 justify-end pt-1">
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => setShowPrescriptionModal(false)}
+              className="text-xs"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={isSubmittingPrescription}
+              size="sm"
+              className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              {isSubmittingPrescription ? 'Authorizing...' : 'Authorize & Sign Prescription'}
+            </Button>
+          </div>
+        </form>
+      )}
 
       {/* Reassign Modal */}
       {showReassignModal && (

@@ -6,13 +6,17 @@ Supports:
   - Inpatient admission, home care discharge, or secondary referral tracking
   - Audited medical decision logging under Telemedicine Practice Guidelines 2020
 """
+import logging
 import time
 from enum import Enum
 from typing import Optional, List, Dict, Any
+from fastapi import HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.auth import AuthenticatedUser
 from app.security.audit_logger import get_audit_logger
+
+logger = logging.getLogger("rural_care.clinical_actions")
 
 
 class DoctorActionType(str, Enum):
@@ -67,6 +71,37 @@ class ClinicalActionManager:
         req: DoctorActionRequest,
         doctor: AuthenticatedUser,
     ) -> ActionRecord:
+        # Validate prescriptions if prescribing medication
+        if req.action_type == DoctorActionType.PRESCRIBE_MEDICATION:
+            if not req.prescriptions:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Prescription requires at least one medication item with name, dosage, frequency, and duration.",
+                )
+
+        if req.prescriptions:
+            for idx, p in enumerate(req.prescriptions):
+                if not p.medication_name or not p.medication_name.strip():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Prescription item #{idx + 1} is missing a valid medication name.",
+                    )
+                if not p.dosage or not p.dosage.strip():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Prescription item #{idx + 1} ({p.medication_name}) is missing dosage.",
+                    )
+                if not p.frequency or not p.frequency.strip():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Prescription item #{idx + 1} ({p.medication_name}) is missing frequency.",
+                    )
+                if not p.duration or not p.duration.strip():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Prescription item #{idx + 1} ({p.medication_name}) is missing duration.",
+                    )
+
         action_id = f"ACT-{int(time.time())}-{req.consultation_id[:8]}"
         record = ActionRecord(
             action_id=action_id,
@@ -87,6 +122,37 @@ class ClinicalActionManager:
             self._history[req.consultation_id] = []
         self._history[req.consultation_id].append(record)
 
+        # Synchronize consultation state in database/in-memory records
+        try:
+            from app.db import get_consultation, save_consultation
+            consultation = get_consultation(req.consultation_id)
+            if consultation:
+                if req.prescriptions:
+                    p_list = [
+                        p.model_dump() if hasattr(p, "model_dump") else p.dict()
+                        for p in req.prescriptions
+                    ]
+                    consultation["prescriptions"] = p_list
+                    consultation["prescribed_by"] = doctor.user_id
+                    consultation["doctor_registration_number"] = doctor.doctor_registration_number
+                    consultation["prescription_timestamp"] = record.timestamp
+
+                if req.new_priority:
+                    consultation["urgency_tier"] = req.new_priority.lower()
+
+                if req.action_type == DoctorActionType.PRESCRIBE_MEDICATION:
+                    consultation["status"] = "prescribed"
+                elif req.action_type in (DoctorActionType.CONFIRM_TRIAGE, DoctorActionType.DISCHARGE_HOME_CARE):
+                    consultation["status"] = "completed"
+                elif req.action_type in (DoctorActionType.REFER_TO_DISTRICT_HOSPITAL, DoctorActionType.ADMIT_TO_PHC):
+                    consultation["status"] = "referred"
+                    if req.referral_hospital:
+                        consultation["referral_hospital"] = req.referral_hospital
+
+                save_consultation(req.consultation_id, consultation)
+        except Exception as sync_err:
+            logger.warning("Failed to synchronize consultation record for action %s: %s", action_id, sync_err)
+
         get_audit_logger().log(
             action=f"CLINICAL_ACTION_{req.action_type.value}",
             user_id=doctor.user_id,
@@ -97,6 +163,7 @@ class ClinicalActionManager:
                 "action_id": action_id,
                 "notes": req.clinical_notes,
                 "referral": req.referral_hospital,
+                "prescriptions_count": len(req.prescriptions or []),
             },
         )
         return record

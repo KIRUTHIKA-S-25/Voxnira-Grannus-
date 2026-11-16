@@ -33,6 +33,13 @@ export default function HistoryPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('grannus_auth_token') : null;
+    const user = typeof window !== 'undefined' ? localStorage.getItem('grannus_user') : null;
+    if (!token && !user) {
+      router.replace('/login');
+      return;
+    }
+
     const prof = getActiveProfile();
     setActiveProfile(prof);
 
@@ -42,21 +49,23 @@ export default function HistoryPage() {
       .catch((err) => console.warn('Could not load profiles', err));
 
     // Load consultations for profile
-    const token = typeof window !== 'undefined' ? localStorage.getItem('grannus_auth_token') : null;
     const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-    if (token) {
-      fetch(`${baseUrl}/api/v1/patient/consultations${prof?.id ? `?profile_id=${prof.id}` : ''}`, {
-        headers: { Authorization: `Bearer ${token}` },
+    fetch(`${baseUrl}/api/v1/patient/consultations${prof?.id ? `?profile_id=${prof.id}` : ''}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: 'include',
+    })
+      .then((res) => {
+        if (res.status === 401) {
+          router.replace('/login');
+          return { consultations: [] };
+        }
+        return res.ok ? res.json() : { consultations: [] };
       })
-        .then((res) => (res.ok ? res.json() : { consultations: [] }))
-        .then((data) => setConsultations(data.consultations || []))
-        .catch((err) => console.warn('Could not fetch history:', err))
-        .finally(() => setIsLoading(false));
-    } else {
-      setIsLoading(false);
-    }
-  }, []);
+      .then((data) => setConsultations(data.consultations || []))
+      .catch((err) => console.warn('Could not fetch history:', err))
+      .finally(() => setIsLoading(false));
+  }, [router]);
 
   const tierStyles: Record<string, { bg: string; text: string; label: string; icon: any }> = {
     emergency: {

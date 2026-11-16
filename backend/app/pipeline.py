@@ -46,6 +46,7 @@ from app.schemas import (
     SafetyScreeningOutput,
     StructuredMedicalSummary,
     TranscriptionResult,
+    UrgencyTier,
 )
 from app.services import gemini_extract, sarvam_stt
 from app.services.gemini_home_remedies import generate_home_remedies
@@ -136,6 +137,60 @@ def check_home_remedy_gate(
             return False, f"Low extraction confidence for '{sym.name}' ({sym.confidence:.2f} < 0.50)"
 
     return True, None
+
+
+def extract_stated_patient_name(transcript_english: str, transcript_original: str = "") -> Optional[str]:
+    """
+    Extract stated patient name from spoken English or regional transcript.
+    Handles phrases like:
+      - 'My name is Ramesh Kumar'
+      - 'I am Priya Sharma'
+      - 'This is Anand'
+      - 'என் பெயர் முருகன்' / 'en peyar Murugan'
+      - 'मेरा नाम मोहन है' / 'mera naam Mohan'
+      - 'నా పేరు వెంకట్' / 'naa peru Venkat'
+    """
+    if not transcript_english and not transcript_original:
+        return None
+
+    # Check English transcript first
+    if transcript_english:
+        eng_patterns = [
+            r"(?:my name is|patient name is|this is|call me)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)",
+            r"(?:i am|i'm)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)",
+            r"(?:name is|name:)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)",
+        ]
+        invalid_words = {
+            "feeling", "having", "sick", "suffering", "pregnant", "pain", "doctor",
+            "fine", "okay", "unwell", "patient", "calling", "unable", "not", "a", "an", "the",
+            "here", "experiencing", "sorry", "asking", "very", "so", "getting", "living"
+        }
+        for pat in eng_patterns:
+            m = re.search(pat, transcript_english, re.IGNORECASE)
+            if m:
+                candidate = m.group(1).strip()
+                words = candidate.lower().split()
+                if not any(w in invalid_words for w in words) and len(candidate) >= 2:
+                    return candidate.title()
+
+    # Check Regional transcript (Tamil / Hindi / Telugu)
+    if transcript_original:
+        reg_patterns = [
+            r"(?:என் பெயர்|என் பேர்|பெயர்|பேர்)\s+([^\s,\.0-9]+(?:\s+[^\s,\.0-9]+)?)",
+            r"(?:मेरा नाम|नाम)\s+([^\s,\.0-9]+(?:\s+[^\s,\.0-9]+)?)",
+            r"(?:నా పేరు|పేరు)\s+([^\s,\.0-9]+(?:\s+[^\s,\.0-9]+)?)",
+            r"(?:en peyar|mera naam|naa peru)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)",
+        ]
+        for pat in reg_patterns:
+            m = re.search(pat, transcript_original, re.IGNORECASE)
+            if m:
+                candidate = m.group(1).strip()
+                # Clean auxiliary trailing particles (Hindi: है/हूँ, Tamil: பேசுகிறேன்)
+                candidate = re.sub(r"\s+(?:है|हूँ|था|थी|hoon|hai|ஆகும்|பேசுகிறேன்)$", "", candidate, flags=re.IGNORECASE).strip()
+                if len(candidate) >= 2:
+                    return candidate.title()
+
+    return None
 
 
 async def run_pipeline(
@@ -331,6 +386,15 @@ async def run_pipeline(
                 "red_flags_extracted": 0,
             }
 
+    # Fallback to regex stated name extraction if not populated by LLM
+    if structured_summary and not structured_summary.stated_patient_name:
+        detected_name = extract_stated_patient_name(
+            transcription.transcript_english,
+            transcription.transcript_original,
+        )
+        if detected_name:
+            structured_summary.stated_patient_name = detected_name
+
     # -------------------------------------------------------------------------
     # Stage 4: Safety / Red-Flag Engine (Deterministic) + 0.2 Independent Raw Scan
     # -------------------------------------------------------------------------
@@ -389,23 +453,35 @@ async def run_pipeline(
         or len(non_negated_symptoms) == 0
     )
 
-    if is_insufficient_input and priority.level == PriorityLevel.LOW:
-        logger.warning(
-            "Insufficient input floor applied: elevating priority from LOW to MEDIUM "
-            "(stt_fail=%s, ext_fail=%s, lang_verif=%s, word_count=%d, symptoms=%d)",
-            stt_failed, extraction_failed, language_verification_required, len(raw_eng.split()), len(non_negated_symptoms)
-        )
-        priority.level = PriorityLevel.MEDIUM
-        priority.confidence = max(priority.confidence, 0.6)
-        insufficient_reason = (
-            "Fail-to-review floor: automated transcription or extraction unavailable; requires human review"
-            if (stt_failed or extraction_failed)
-            else "Insufficient input: empty extraction, low STT confidence, or very short transcript routed to clinician review"
-        )
-        priority.reasons = [insufficient_reason] + priority.reasons
-        priority.triggered_rules.append("insufficient_input_floor")
+    if is_insufficient_input:
+        if priority.level == PriorityLevel.LOW:
+            logger.warning(
+                "Insufficient input floor applied: elevating priority from LOW to MEDIUM "
+                "(stt_fail=%s, ext_fail=%s, lang_verif=%s, word_count=%d, symptoms=%d)",
+                stt_failed, extraction_failed, language_verification_required, len(raw_eng.split()), len(non_negated_symptoms)
+            )
+            priority.level = PriorityLevel.MEDIUM
+            priority.confidence = max(priority.confidence, 0.6)
+            insufficient_reason = (
+                "Fail-to-review floor: automated transcription or extraction unavailable; requires human review"
+                if (stt_failed or extraction_failed)
+                else "Insufficient input: empty extraction, low STT confidence, or very short transcript routed to clinician review"
+            )
+            priority.reasons = [insufficient_reason] + priority.reasons
+            priority.triggered_rules.append("insufficient_input_floor")
+            if stt_failed or extraction_failed:
+                priority.model_used = "fail_to_review"
+
         if stt_failed or extraction_failed:
             priority.model_used = "fail_to_review"
+
+        if priority.urgency_tier != UrgencyTier.EMERGENCY:
+            if stt_failed or extraction_failed:
+                priority.urgency_tier = UrgencyTier.DOCTOR_TODAY
+                priority.follow_up_days = 1
+            elif priority.urgency_tier == UrgencyTier.SELF_CARE:
+                priority.urgency_tier = UrgencyTier.DOCTOR_SOON
+                priority.follow_up_days = 2
 
     # Record prediction in drift monitor for distribution shift tracking
     try:
@@ -432,6 +508,7 @@ async def run_pipeline(
     # Build ClinicalSummary once to be reused
     clinical_summary = ClinicalSummary(
         chief_complaint=structured_summary.chief_complaint,
+        stated_patient_name=structured_summary.stated_patient_name,
         symptoms=structured_summary.symptoms,
         existing_conditions=structured_summary.existing_conditions,
         medications=structured_summary.medications,

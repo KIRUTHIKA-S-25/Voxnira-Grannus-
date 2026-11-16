@@ -18,7 +18,7 @@ from google.genai import errors as genai_errors
 from pydantic import ValidationError
 
 from app.config import get_settings
-from app.schemas import StructuredMedicalSummary
+from app.schemas import StructuredMedicalSummary, InfoSource
 from app.vocab import (
     is_known_symptom,
     normalize_body_location,
@@ -93,6 +93,9 @@ STRICT RULES:
   do NOT map 'sugar' to 'diabetes' or 'BP' to 'hypertension'. Instead, record verbatim what \
   the patient reported (e.g. 'patient reported history of sugar', 'patient reported BP issue') \
   in existing_conditions and let the doctor confirm the clinical diagnosis.
+- Detect STATED PATIENT NAME. If the patient explicitly states their personal name in the transcript \
+  (e.g., 'My name is Ramesh Kumar', 'I am Priya', 'En peyar Murugan', 'Mera naam Mohan hai'), \
+  populate 'stated_patient_name' with their clean name. If no name was stated or if ambiguous, leave 'stated_patient_name' null.
 
 EXAMPLES (follow this pattern exactly):
 
@@ -228,6 +231,22 @@ def _normalize(summary: StructuredMedicalSummary, raw_transcript: str = "") -> S
             cleaned_conditions.append(cond)
     summary.existing_conditions = cleaned_conditions
 
+    for symptom in summary.symptoms:
+        if not getattr(symptom, "source", None):
+            symptom.source = InfoSource.PATIENT_REPORTED
+    for rf in summary.red_flags:
+        if not getattr(rf, "source", None):
+            rf.source = InfoSource.PATIENT_REPORTED
+
+    # Clean and validate stated patient name
+    if summary.stated_patient_name:
+        clean_pname = summary.stated_patient_name.strip()
+        invalid_words = {"patient", "fine", "sick", "having", "pregnant", "pain", "doctor", "hospital", "unknown", "none"}
+        if len(clean_pname) < 2 or clean_pname.lower() in invalid_words or any(w in clean_pname.lower() for w in ["suffering", "having severe", "feeling"]):
+            summary.stated_patient_name = None
+        else:
+            summary.stated_patient_name = clean_pname
+
     return summary
 
 
@@ -279,7 +298,7 @@ def extract_deterministic_summary(transcript_english: str, patient_context: Opti
     """
     from app.safety import screen_safety
     from app.vocab import SYMPTOM_VOCAB
-    from app.schemas import Symptom, RedFlag
+    from app.schemas import Symptom, RedFlag, InfoSource
 
     screening = screen_safety(transcript_english=transcript_english)
     symptoms = []
@@ -293,9 +312,23 @@ def extract_deterministic_summary(transcript_english: str, patient_context: Opti
                     neg = True
                     break
             if not any(s.name == canonical for s in symptoms):
-                symptoms.append(Symptom(name=canonical, negated=neg, confidence=0.7))
+                symptoms.append(Symptom(
+                    name=canonical,
+                    raw_text=sym_variant,
+                    negated=neg,
+                    source=InfoSource.PATIENT_REPORTED,
+                    confidence=0.7,
+                ))
 
-    red_flags = [RedFlag(phrase=rf.reason, related_symptom=rf.symptom) for rf in screening.red_flags]
+    red_flags = [
+        RedFlag(
+            phrase=rf.reason,
+            related_symptom=rf.symptom,
+            source=InfoSource.PATIENT_REPORTED,
+            confidence=0.9,
+        )
+        for rf in screening.red_flags
+    ]
     ctx = patient_context or {}
     conds = []
     if ctx.get("known_conditions"):

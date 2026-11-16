@@ -92,7 +92,8 @@ class VoiceThreadManager:
 
         try:
             from app.db import save_voice_thread
-            save_voice_thread(consultation_id, thread.dict())
+            thread_dict = thread.model_dump() if hasattr(thread, "model_dump") else thread.dict()
+            save_voice_thread(consultation_id, thread_dict)
         except Exception:
             pass
 

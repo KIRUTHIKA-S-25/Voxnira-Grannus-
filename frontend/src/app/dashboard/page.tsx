@@ -25,53 +25,6 @@ import {
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
-const HOSPITAL_CLINICIANS = [
-  {
-    name: 'Dr. Rajan K., MD',
-    role: 'doctor',
-    title: 'General Medicine (HOD)',
-    email: 'dr.rajan@hospital.in',
-    regNo: 'TNMC-48291',
-    council: 'Tamil Nadu Medical Council',
-    languages: 'Tamil, English, Hindi',
-  },
-  {
-    name: 'Dr. Priya Sundaram, DM',
-    role: 'doctor',
-    title: 'Cardiology Specialist',
-    email: 'dr.priya@hospital.in',
-    regNo: 'TNMC-54321',
-    council: 'Tamil Nadu Medical Council',
-    languages: 'Tamil, English',
-  },
-  {
-    name: 'Dr. Vikram Patel, MD',
-    role: 'doctor',
-    title: 'Pediatrics Consultant',
-    email: 'dr.vikram@hospital.in',
-    regNo: 'GMC-39104',
-    council: 'Gujarat Medical Council',
-    languages: 'Hindi, English, Telugu',
-  },
-  {
-    name: 'Dr. Meenakshi Iyer, MS',
-    role: 'doctor',
-    title: 'OB-GYN Senior Consultant',
-    email: 'dr.meenakshi@hospital.in',
-    regNo: 'TNMC-61245',
-    council: 'Tamil Nadu Medical Council',
-    languages: 'Tamil, English',
-  },
-  {
-    name: 'Staff Nurse Deepa R.',
-    role: 'nurse',
-    title: 'Triage Lead & ER Coordinator',
-    email: 'nurse.mary@hospital.in',
-    password: 'grannus_nurse_2026',
-    languages: 'Tamil, English',
-  },
-];
-
 export default function DashboardPage() {
   const router = useRouter();
   const {
@@ -93,9 +46,8 @@ export default function DashboardPage() {
 
   useEffect(() => {
     try {
-      const token = localStorage.getItem('grannus_auth_token');
       const stored = localStorage.getItem('grannus_user');
-      if (token && stored) {
+      if (stored) {
         const u = JSON.parse(stored);
         if (['doctor', 'nurse', 'admin'].includes(u.role)) {
           setCurrentUser(u);
@@ -107,48 +59,22 @@ export default function DashboardPage() {
               if (res && res.doctors) setDoctorsRoster(res.doctors);
             })
             .catch((e) => console.warn('Could not load roster', e));
+          return;
         }
       }
+      // Redirect unauthenticated visitors to login (A1, B10)
+      router.replace('/login');
     } catch (e) {
       console.warn('Session check:', e);
+      router.replace('/login');
     }
-  }, []);
+  }, [router]);
 
-  const handleQuickLogin = async (doctor: (typeof HOSPITAL_CLINICIANS)[0]) => {
-    try {
-      const payload: Record<string, any> = {
-        email: doctor.email,
-        user_id: doctor.email,
-        password: doctor.password || 'grannus_secure_doctor_2026',
-        role: doctor.role,
-      };
-      if (doctor.role === 'doctor') {
-        payload.doctor_registration_number = doctor.regNo;
-        payload.state_medical_council = doctor.council || 'Tamil Nadu Medical Council';
-      }
-      const data = await loginStaff(payload);
-      const user = {
-        user_id: data.user_id,
-        email: doctor.email,
-        full_name: doctor.name,
-        role: data.role,
-        is_verified_doctor: data.is_verified_doctor,
-        doctor_registration_number: data.doctor_registration_number || doctor.regNo,
-        is_on_duty: true,
-      };
-      localStorage.setItem('grannus_user', JSON.stringify(user));
-      setCurrentUser(user);
-      setIsOnDuty(true);
-      await refetch();
-      getDoctorRoster()
-        .then((res) => {
-          if (res && res.doctors) setDoctorsRoster(res.doctors);
-        })
-        .catch(() => {});
-    } catch (err: any) {
-      console.warn('Quick login failed:', err);
+  useEffect(() => {
+    if (isUnauthorized) {
+      router.replace('/login');
     }
-  };
+  }, [isUnauthorized, router]);
 
   // Sync selected consultation with fresh list
   useEffect(() => {
@@ -195,64 +121,23 @@ export default function DashboardPage() {
 
   if (!currentUser || isUnauthorized) {
     return (
-      <div className="container mx-auto px-4 py-12 max-w-3xl animate-gentle-fade-in">
-        <div className="text-center mb-8">
-          <div className="inline-flex p-3 bg-primary/10 rounded-full mb-3 text-primary">
-            <Stethoscope className="w-8 h-8" />
-          </div>
-          <h1 className="text-2xl md:text-3xl font-heading font-semibold text-foreground">
-            Hospital Clinician Portal
-          </h1>
-          <p className="text-muted-foreground text-sm mt-1.5 max-w-md mx-auto">
-            Telemedicine Practice Guidelines 2020 Registered Medical Practitioner Access. Select a duty clinician to open the live triage queue.
-          </p>
+      <div className="container mx-auto px-4 py-16 max-w-lg text-center animate-gentle-fade-in">
+        <div className="inline-flex p-3 bg-primary/10 rounded-full mb-4 text-primary">
+          <Stethoscope className="w-8 h-8" />
         </div>
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          {HOSPITAL_CLINICIANS.map((doc) => (
-            <div
-              key={doc.email}
-              className="p-4 rounded-xl border border-border bg-card hover:border-primary/50 transition-all flex flex-col justify-between"
-            >
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-semibold text-foreground text-sm">{doc.name}</span>
-                  <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-primary/10 text-primary">
-                    {doc.role}
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground">{doc.title}</p>
-                {doc.regNo && (
-                  <p className="text-[11px] font-mono text-muted-foreground/80 mt-1">
-                    Reg: {doc.regNo}
-                  </p>
-                )}
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Languages: {doc.languages}
-                </p>
-              </div>
-              <Button
-                size="sm"
-                className="mt-3.5 w-full text-xs font-medium gap-1.5"
-                onClick={() => handleQuickLogin(doc)}
-              >
-                <LogIn className="w-3.5 h-3.5" />
-                Open Workstation
-              </Button>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-6 text-center">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => router.push('/login')}
-            className="text-xs text-muted-foreground"
-          >
-            Sign in with custom password / credentials
-          </Button>
-        </div>
+        <h1 className="text-2xl font-heading font-semibold text-foreground mb-2">
+          Clinician Authentication Required
+        </h1>
+        <p className="text-muted-foreground text-sm mb-6">
+          Access to the hospital triage workstation is restricted to verified healthcare professionals. Please sign in with your credentials to access the queue.
+        </p>
+        <Button
+          onClick={() => router.push('/login')}
+          className="gap-2 font-medium"
+        >
+          <LogIn className="w-4 h-4" />
+          Sign In to Clinician Workstation
+        </Button>
       </div>
     );
   }

@@ -47,6 +47,9 @@ export default function ProcessingPage() {
             known_conditions: payload.known_conditions,
             current_medications: payload.current_medications,
             profile_id: payload.profile_id,
+            patient_name: payload.patient_name,
+            latitude: payload.latitude,
+            longitude: payload.longitude,
           });
         })
         .catch(fetchErr => {

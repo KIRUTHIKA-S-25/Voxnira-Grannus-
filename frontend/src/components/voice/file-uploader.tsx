@@ -70,6 +70,7 @@ export function FileUploader({ onAudioReady }: { onAudioReady: (blob: Blob) => v
             className="hidden" 
             accept="audio/*" 
             onChange={handleChange} 
+            aria-label="Upload audio consultation file"
           />
           <motion.div whileHover={{ y: -5 }}>
             <Upload className="w-12 h-12 text-muted-foreground mb-4" />

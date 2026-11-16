@@ -8,10 +8,25 @@ services:
       - "8000:8000"
     environment:
       - PORT=8000
+      - ENV=${ENV:-development}
       - SARVAM_API_KEY=${SARVAM_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
       - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY:-}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
+      - PHI_ENCRYPTION_KEY=${PHI_ENCRYPTION_KEY:-}
+      - AUDIO_RETENTION_HOURS=${AUDIO_RETENTION_HOURS:-72}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      - SMS_PROVIDER=${SMS_PROVIDER:-msg91}
+      - MSG91_AUTH_KEY=${MSG91_AUTH_KEY:-}
+      - MSG91_TEMPLATE_ID=${MSG91_TEMPLATE_ID:-}
+      - MSG91_SENDER_ID=${MSG91_SENDER_ID:-GRANNU}
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
+      - TWILIO_PHONE_NUMBER=${TWILIO_PHONE_NUMBER:-}
+      - ALLOW_DEV_OTP=${ALLOW_DEV_OTP:-false}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

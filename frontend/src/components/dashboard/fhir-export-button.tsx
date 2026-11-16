@@ -3,7 +3,8 @@ import { useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { FileJson, Loader2, Download, CheckCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { exportFhirBundle, loginAsClinician, PipelineResult } from '@/lib/api';
+import Link from 'next/link';
+import { exportFhirBundle, PipelineResult } from '@/lib/api';
 
 interface FhirExportButtonProps {
   result: PipelineResult;
@@ -41,18 +42,6 @@ export function FhirExportButton({ result }: FhirExportButtonProps) {
     }
   }, [result]);
 
-  const handleQuickLoginAndExport = async () => {
-    setIsExporting(true);
-    setError(null);
-    try {
-      await loginAsClinician();
-      await handleExport();
-    } catch (err: any) {
-      setError('Clinician login failed. Please sign in via the Clinician Portal.');
-      setIsExporting(false);
-    }
-  };
-
   return (
     <div className="space-y-1.5">
       <Button
@@ -88,14 +77,12 @@ export function FhirExportButton({ result }: FhirExportButtonProps) {
         <div className="p-2 rounded-lg bg-destructive/10 border border-destructive/20 text-center">
           <p className="text-[11px] text-destructive leading-tight">{error}</p>
           {(error.includes('login') || error.includes('authorized') || error.includes('401')) && (
-            <button
-              type="button"
-              onClick={handleQuickLoginAndExport}
-              disabled={isExporting}
+            <Link
+              href="/login"
               className="mt-1.5 text-[10px] text-primary underline font-semibold hover:text-primary/80 block w-full text-center"
             >
-              Sign In as Dr. Rajan K., MD (TNMC-48291) & Download
-            </button>
+              Sign In via Clinician Portal
+            </Link>
           )}
         </div>
       )}

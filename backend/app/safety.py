@@ -50,7 +50,7 @@ RED_FLAG_RULES: List[Tuple[List[str], bool, str, str, str]] = [
 
     (["stroke", "slurred speech", "one-sided weakness", "sudden confusion"], False, "critical", "emergency_referral", "Potential stroke symptoms reported"),
 
-    (["poisoning", "ingestion of harmful substance", "snakebite", "snake bite", "pesticide", "organophosphate", "insecticide", "rat poison"], False, "critical", "emergency_referral", "Poisoning or envenomation reported"),
+    (["poisoning", "ingestion of harmful substance", "snakebite", "snake bite", "snake bit", "bit by snake", "pesticide", "organophosphate", "insecticide", "rat poison"], False, "critical", "emergency_referral", "Poisoning or envenomation reported"),
     (["scorpion sting", "scorpion bite"], False, "critical", "emergency_referral", "Scorpion sting reported"),
     (["dog bite", "animal bite", "rabies"], False, "high", "clinician_review", "Animal bite reported"),
 
@@ -70,7 +70,7 @@ RED_FLAG_RULES: List[Tuple[List[str], bool, str, str, str]] = [
     (["severe dehydration"], False, "high", "clinician_review", "Severe dehydration reported"),
     (["dehydration"], True, "high", "clinician_review", "Severe dehydration reported"),
     
-    (["vaginal bleeding during pregnancy", "eclampsia", "pre-eclampsia", "labor pain", "water broke", "premature labor"], False, "critical", "emergency_referral", "Obstetric emergency reported"),
+    (["vaginal bleeding during pregnancy", "pregnancy bleeding", "bleeding during pregnancy", "bleeding in pregnancy", "pregnant bleeding", "eclampsia", "pre-eclampsia", "labor pain", "water broke", "premature labor"], False, "critical", "emergency_referral", "Obstetric emergency reported"),
 ]
 
 # 0.2: Indic keyword lists for Tamil, Hindi, Telugu, and transliterations
@@ -224,9 +224,9 @@ INDIC_RED_FLAG_RULES: List[Tuple[List[str], bool, str, str, str]] = [
     # Obstetric
     (
         [
-            "பிரசவ வலி", "prasava vali",
-            "प्रसव पीड़ा", "prasav peeda",
-            "ప్రసవ నొప్పులు", "prasava noppulu",
+            "பிரசவ வலி", "prasava vali", "கர்ப்ப காலத்தில் ரத்தப்போக்கு", "karppa kaalathil rathapokku",
+            "प्रसव पीड़ा", "prasav peeda", "गर्भावस्था में रक्तस्राव", "garbhavastha me bleeding", "garbh me khoon",
+            "ప్రసవ నొప్పులు", "prasava noppulu", "గర్భధారణ రక్తస్రావం", "gabbavathi rakthasravam",
         ],
         False, "critical", "emergency_referral", "Obstetric emergency reported (Indic)",
     ),

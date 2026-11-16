@@ -13,11 +13,12 @@ import time
 import base64
 import json
 import re
+import uuid
 import logging
 from enum import Enum
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone, timedelta
-from fastapi import HTTPException, Security, Depends, status
+from fastapi import HTTPException, Security, Depends, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 
@@ -56,41 +57,17 @@ def verify_password(password: str, hashed: str) -> bool:
         return False
 
 
-# Registered medical / admin users with PBKDF2-hashed passwords
-_REGISTERED_USERS: Dict[str, Dict[str, Any]] = {
-    "dr.rajan@hospital.in": {
-        "role": "doctor",
-        "password_hash": hash_password("grannus_secure_doctor_2026"),
-        "doctor_reg_no": "TNMC-48291",
-        "state_council": "Tamil Nadu Medical Council",
-    },
-    "dr_clinician": {
-        "role": "doctor",
-        "password_hash": hash_password("grannus_secure_doctor_2026"),
-        "doctor_reg_no": "TNMC-48291",
-        "state_council": "Tamil Nadu Medical Council",
-    },
-    "admin_user": {
-        "role": "admin",
-        "password_hash": hash_password("grannus_secure_admin_2026"),
-        "doctor_reg_no": None,
-        "state_council": None,
-    },
-}
-
-
 def authenticate_credentials(user_id: str, role: "UserRole", password: Optional[str] = None) -> bool:
     """
-    Authenticate user credentials against password registry.
+    Authenticate staff user credentials against database-backed repository (A2).
     Requires an explicit registered account and valid password.
     Legacy open login bypass is deleted (H1.1).
     """
     if not password:
         return False
-    if user_id in _REGISTERED_USERS:
-        reg_info = _REGISTERED_USERS[user_id]
-        return verify_password(password, reg_info["password_hash"])
-    return False
+    from app.db import authenticate_staff_user
+    staff = authenticate_staff_user(user_id, password)
+    return staff is not None
 
 
 class UserRole(str, Enum):
@@ -199,6 +176,7 @@ def create_token(
         is_verified = validate_doctor_registration(doctor_reg_no)
 
     payload = {
+        "jti": uuid.uuid4().hex,
         "sub": user_id,
         "role": role.value,
         "doc_reg": doctor_reg_no,
@@ -270,16 +248,23 @@ def verify_token(token: str) -> AuthenticatedUser:
 
 
 async def get_current_user(
-    auth: Optional[HTTPAuthorizationCredentials] = Security(security_bearer)
+    request: Request = None,
+    auth: Optional[HTTPAuthorizationCredentials] = Security(security_bearer),
 ) -> AuthenticatedUser:
-    """Dependency for extracting authenticated user."""
-    if not auth or not auth.credentials:
+    """Dependency for extracting authenticated user from Bearer header or httpOnly cookie (A4)."""
+    token: Optional[str] = None
+    if auth and auth.credentials:
+        token = auth.credentials
+    elif request and request.cookies.get("grannus_auth_token"):
+        token = request.cookies.get("grannus_auth_token")
+
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing Authorization Bearer token.",
+            detail="Missing Authorization Bearer token or session cookie.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return verify_token(auth.credentials)
+    return verify_token(token)
 
 
 def require_role(allowed_roles: List[UserRole]):

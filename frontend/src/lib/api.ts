@@ -261,15 +261,15 @@ export async function sendVoicePrescription(params: {
 /**
  * Authenticate session as registered clinician (RMP under Telemedicine Guidelines).
  */
-export async function loginAsClinician(options?: {
-  email?: string;
-  password?: string;
+export async function loginAsClinician(options: {
+  email: string;
+  password: string;
   regNo?: string;
 }): Promise<string> {
   const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-  const email = options?.email || 'dr.rajan@hospital.in';
-  const password = options?.password || 'grannus_secure_doctor_2026';
-  const regNo = options?.regNo || 'TNMC-48291';
+  const email = options.email;
+  const password = options.password;
+  const regNo = options.regNo;
 
   const res = await fetch(`${baseUrl}/api/v1/auth/login`, {
     method: 'POST',
@@ -312,45 +312,19 @@ export const loginAsDemoClinician = loginAsClinician;
  */
 export async function exportFhirBundle(result: PipelineResult): Promise<Record<string, unknown>> {
   const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-  let token = getAuthToken();
+  const token = getAuthToken();
 
-  // If no auth token is present, auto-authenticate as clinician
-  if (!token) {
-    try {
-      token = await loginAsClinician();
-    } catch (e) {
-      console.warn("Could not auto-login as clinician:", e);
-    }
-  }
-
-  let headers: Record<string, string> = {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
   };
 
-  let response = await fetch(`${baseUrl}/api/v1/export/fhir`, {
+  const response = await fetch(`${baseUrl}/api/v1/export/fhir`, {
     method: 'POST',
     headers,
+    credentials: 'include',
     body: JSON.stringify(result),
   });
-
-  // If token is missing, expired, or rejected (401/403), re-authenticate once as clinician
-  if (response.status === 401 || response.status === 403) {
-    try {
-      token = await loginAsClinician();
-      headers = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      };
-      response = await fetch(`${baseUrl}/api/v1/export/fhir`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(result),
-      });
-    } catch {
-      // Fall through to error handler below
-    }
-  }
 
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {
@@ -375,6 +349,9 @@ export async function submitAudioAsync(params: {
   known_conditions?: string;
   current_medications?: string;
   profile_id?: string;
+  patient_name?: string;
+  latitude?: number;
+  longitude?: number;
 }): Promise<{ job_id: string; status: string; poll_url: string; message: string }> {
   const formData = new FormData();
   formData.append('audio', params.audio, 'recording.webm');
@@ -386,6 +363,9 @@ export async function submitAudioAsync(params: {
   if (params.known_conditions) formData.append('known_conditions', params.known_conditions);
   if (params.current_medications) formData.append('current_medications', params.current_medications);
   if (params.profile_id) formData.append('profile_id', params.profile_id);
+  if (params.patient_name) formData.append('patient_name', params.patient_name);
+  if (params.latitude !== undefined && params.latitude !== null) formData.append('latitude', String(params.latitude));
+  if (params.longitude !== undefined && params.longitude !== null) formData.append('longitude', String(params.longitude));
 
   const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   const response = await fetch(`${baseUrl}/api/v1/pipeline/submit-audio`, {
@@ -971,6 +951,76 @@ export async function getDoctorRoster(department?: string, onDutyOnly = false): 
   return res.json();
 }
 
+export interface PrescriptionItem {
+  medication_name: string;
+  dosage: string;
+  frequency: string;
+  duration: string;
+  instructions?: string;
+}
 
+export type DoctorActionType =
+  | 'CONFIRM_TRIAGE'
+  | 'OVERRIDE_PRIORITY'
+  | 'PRESCRIBE_MEDICATION'
+  | 'REFER_TO_DISTRICT_HOSPITAL'
+  | 'ADMIT_TO_PHC'
+  | 'DISCHARGE_HOME_CARE';
 
+export interface DoctorActionRequest {
+  consultation_id: string;
+  action_type: DoctorActionType;
+  clinical_notes: string;
+  new_priority?: string;
+  referral_hospital?: string;
+  referral_urgency?: string;
+  prescriptions?: PrescriptionItem[];
+}
 
+export interface ActionRecord {
+  action_id: string;
+  consultation_id: string;
+  doctor_id: string;
+  doctor_registration_number?: string;
+  state_medical_council?: string;
+  action_type: DoctorActionType;
+  clinical_notes: string;
+  new_priority?: string;
+  referral_hospital?: string;
+  referral_urgency?: string;
+  prescriptions: PrescriptionItem[];
+  timestamp: number;
+}
+
+export async function recordConsultationAction(req: DoctorActionRequest): Promise<ActionRecord> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const res = await fetch(`${baseUrl}/api/v1/consultations/action`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(req),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to record clinical action.');
+  }
+
+  return res.json();
+}
+
+export async function getConsultationActions(consultationId: string): Promise<ActionRecord[]> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const res = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}/actions`, {
+    headers: getAuthHeaders(),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to fetch consultation actions.');
+  }
+
+  return res.json();
+}

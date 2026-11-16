@@ -15,8 +15,8 @@ from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger("rural_care.retention")
 
-# Statutory retention limits
-AUDIO_DEFAULT_RETENTION_HOURS = 24
+# Statutory retention limits (72h temporary audio retention, 3-year clinical summary)
+AUDIO_DEFAULT_RETENTION_HOURS = 72
 CLINICAL_SUMMARY_RETENTION_YEARS = 3
 
 
@@ -30,16 +30,18 @@ class DataRetentionManager:
     def schedule_audio_deletion(
         self,
         file_path: str,
-        hours: int = AUDIO_DEFAULT_RETENTION_HOURS,
+        hours: Optional[int] = None,
         hospital_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Schedule a raw audio file for automatic deletion after 24 hours (H4.1).
+        Schedule a raw audio file for automatic deletion after 72 hours (or configured hours).
         Stores created_at and delete_after in the database so it survives server restarts.
         """
+        from app.config import get_settings
+        effective_hours = hours if hours is not None else (get_settings().audio_retention_hours or AUDIO_DEFAULT_RETENTION_HOURS)
         now = datetime.now(timezone.utc)
-        delete_after = now + timedelta(hours=hours)
-        expiry_ts = time.time() + (hours * 3600)
+        delete_after = now + timedelta(hours=effective_hours)
+        expiry_ts = time.time() + (effective_hours * 3600)
         h_id = hospital_id or "c5b971d1-fe39-40bf-a5cb-539f1a98059f"
 
         record = {
@@ -68,8 +70,20 @@ class DataRetentionManager:
         except Exception as exc:
             logger.error("Failed to persist audio retention record to DB: %s", exc)
 
-        logger.info("Scheduled 24h audio deletion for %s (delete_after: %s)", file_path, delete_after.isoformat())
+        logger.info("Scheduled %dh audio deletion for %s (delete_after: %s)", effective_hours, file_path, delete_after.isoformat())
         return record
+
+    def get_retention_status(self) -> Dict[str, Any]:
+        """Returns current operational metrics of retention queues."""
+        from app.config import get_settings
+        settings = get_settings()
+        retention_hours = settings.audio_retention_hours or AUDIO_DEFAULT_RETENTION_HOURS
+        return {
+            "default_retention_hours": retention_hours,
+            "scheduled_files_count": len(self._scheduled_deletions),
+            "purged_files_count": len(self._purged_files),
+            "erased_patients_count": len(self._erased_patients),
+        }
 
     def execute_retention_sweep(self) -> List[str]:
         """
@@ -77,6 +91,9 @@ class DataRetentionManager:
         Deletes audio files from storage and writes records to deletion_log.
         Survives restarts by querying audio_retention_queue from database.
         """
+        from app.config import get_settings
+        settings = get_settings()
+        retention_hours = settings.audio_retention_hours or AUDIO_DEFAULT_RETENTION_HOURS
         now = datetime.now(timezone.utc)
         now_iso = now.isoformat()
         now_ts = time.time()
@@ -109,11 +126,12 @@ class DataRetentionManager:
                             log_deletion_event(
                                 resource_type="audio_recording",
                                 resource_id=f_path,
-                                reason="24-hour statutory audio retention policy expired",
+                                reason=f"{retention_hours}-hour statutory audio retention policy expired",
                                 hospital_id=row.get("hospital_id"),
                                 metadata={
                                     "created_at": row.get("created_at"),
                                     "delete_after": row.get("delete_after"),
+                                    "retention_hours": retention_hours,
                                 },
                             )
                             # Mark purged in database
@@ -143,14 +161,15 @@ class DataRetentionManager:
                     log_deletion_event(
                         resource_type="audio_recording",
                         resource_id=file_path,
-                        reason="24-hour statutory audio retention policy expired",
+                        reason=f"{retention_hours}-hour statutory audio retention policy expired",
                         hospital_id=record.get("hospital_id"),
                         metadata={
                             "created_at": record.get("created_at"),
                             "delete_after": record.get("delete_after"),
+                            "retention_hours": retention_hours,
                         },
                     )
-                    logger.info("Purged expired 24h raw audio: %s", file_path)
+                    logger.info("Purged expired %dh raw audio: %s", retention_hours, file_path)
                 except Exception as exc:
                     logger.error("Failed to purge %s: %s", file_path, exc)
 

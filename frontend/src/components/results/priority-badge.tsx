@@ -1,7 +1,17 @@
 'use client';
 import { motion } from 'framer-motion';
 
-export function PriorityBadge({ level, confidence, size = 'md' }: { level: string; confidence?: number; size?: 'sm' | 'md' | 'lg' }) {
+export function PriorityBadge({
+  level,
+  confidence,
+  size = 'md',
+  showConfidence = true,
+}: {
+  level: string;
+  confidence?: number;
+  size?: 'sm' | 'md' | 'lg';
+  showConfidence?: boolean;
+}) {
   const getStyles = () => {
     switch (level) {
       case 'HIGH': return 'bg-[#a65d57] text-white shadow-[0_0_15px_rgba(166,93,87,0.4)]';
@@ -27,7 +37,7 @@ export function PriorityBadge({ level, confidence, size = 'md' }: { level: strin
       className={`inline-flex items-center gap-2 rounded-full font-medium tracking-wide ${getStyles()} ${getSize()}`}
     >
       <span>{level.replace('_', ' ')}</span>
-      {confidence !== undefined && (
+      {showConfidence && confidence !== undefined && (
         <span className="opacity-80 text-[0.85em] ml-1 border-l border-white/30 pl-2">
           {Math.round(confidence * 100)}%
         </span>

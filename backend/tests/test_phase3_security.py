@@ -391,6 +391,7 @@ def test_abdm_fhir_r4_bundle_validation():
 # -----------------------------------------------------------------------------
 
 def test_auth_login_endpoint():
+    client.cookies.clear()
     # Valid doctor login
     # Valid doctor login with credentials (H1.1)
     res = client.post("/api/v1/auth/login", json={
@@ -413,6 +414,7 @@ def test_auth_login_endpoint():
         "doctor_registration_number": "BAD",
     })
     assert res_bad.status_code == 401
+    client.cookies.clear()
 
 
 def test_consent_api_endpoints():
@@ -436,6 +438,7 @@ def test_consent_api_endpoints():
 
 
 def test_protected_doctor_endpoints():
+    client.cookies.clear()
     # Unauthenticated voice-prescription call -> 401
     res = client.post("/api/v1/doctor/voice-prescription")
     assert res.status_code == 401
@@ -523,6 +526,7 @@ def test_protected_doctor_endpoints():
 
 
 def test_statutory_erasure_endpoint():
+    client.cookies.clear()
     pat_token = create_token(user_id="pat_test_erase", role=UserRole.PATIENT)
     
     # Unauthenticated -> 401

@@ -42,7 +42,8 @@ export function AudioRecorder({ onAudioReady }: { onAudioReady: (blob: Blob) => 
                 <Button 
                   variant="outline" 
                   size="icon" 
-                  className="w-14 h-14 rounded-full border-2 border-primary/20 text-primary hover:bg-primary/10"
+                  aria-label={isPaused ? "Resume voice recording" : "Pause voice recording"}
+                  className="w-14 h-14 rounded-full border-2 border-primary/20 text-primary hover:bg-primary/10 min-w-[44px] min-h-[44px]"
                   onClick={isPaused ? resumeRecording : pauseRecording}
                 >
                   {isPaused ? <Play className="w-6 h-6" /> : <Pause className="w-6 h-6" />}
@@ -51,7 +52,8 @@ export function AudioRecorder({ onAudioReady }: { onAudioReady: (blob: Blob) => 
                 <Button 
                   variant="destructive" 
                   size="icon" 
-                  className="w-20 h-20 rounded-organic-1 bg-destructive hover:bg-destructive/90 shadow-lg"
+                  aria-label="Stop and finish voice recording"
+                  className="w-20 h-20 rounded-organic-1 bg-destructive hover:bg-destructive/90 shadow-lg min-w-[44px] min-h-[44px]"
                   onClick={handleStop}
                 >
                   <Square className="w-8 h-8 fill-current" />
@@ -61,7 +63,8 @@ export function AudioRecorder({ onAudioReady }: { onAudioReady: (blob: Blob) => 
               <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                 <Button 
                   size="icon" 
-                  className="w-24 h-24 rounded-organic-3 bg-primary hover:bg-primary/90 shadow-ink-wash-lg text-primary-foreground"
+                  aria-label="Start speaking and voice recording"
+                  className="w-24 h-24 rounded-organic-3 bg-primary hover:bg-primary/90 shadow-ink-wash-lg text-primary-foreground min-w-[48px] min-h-[48px]"
                   onClick={startRecording}
                 >
                   <Mic className="w-10 h-10" />

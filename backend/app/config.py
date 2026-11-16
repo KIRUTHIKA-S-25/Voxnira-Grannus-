@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     supabase_anon_key: str = ""
     supabase_service_role_key: str = ""
     env: str = "development"
-    audio_retention_hours: int = 24
+    audio_retention_hours: int = 72
 
     # --- Auth & PHI Security ---
     jwt_secret_key: str = ""

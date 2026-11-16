@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, ChevronUp, ShieldCheck } from 'lucide-react';
+import { ChevronDown, ChevronUp, ShieldCheck, PhoneCall, MapPin, AlertCircle } from 'lucide-react';
 import { ConsentDialog } from '@/components/voice/consent-dialog';
 
 export default function VoiceInputPage() {
@@ -32,9 +32,43 @@ export default function VoiceInputPage() {
   const [conditions, setConditions] = useState('');
   const [medications, setMedications] = useState('');
 
+  // Geolocation state
+  const [locationCoords, setLocationCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [isLocating, setIsLocating] = useState(false);
+
+  const requestLocation = () => {
+    if (typeof window === 'undefined' || !navigator.geolocation) {
+      setLocationError('Geolocation is not supported by your browser.');
+      return;
+    }
+    setIsLocating(true);
+    setLocationError(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocationCoords({
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+        });
+        setIsLocating(false);
+      },
+      (err) => {
+        setIsLocating(false);
+        setLocationError('Location access denied or unavailable. Consultation will proceed without GPS.');
+      },
+      { enableHighAccuracy: false, timeout: 8000 }
+    );
+  };
+
   const [isClient, setIsClient] = useState(false);
   useEffect(() => {
     setIsClient(true);
+    const token = typeof window !== 'undefined' ? (localStorage.getItem('grannus_auth_token') || localStorage.getItem('grannus_user')) : null;
+    if (!token) {
+      router.replace('/login');
+      return;
+    }
+
     const profile = getActiveProfile();
     if (profile) {
       setActiveProfileState(profile);
@@ -44,7 +78,7 @@ export default function VoiceInputPage() {
       if (profile.known_conditions?.length) setConditions(profile.known_conditions.join(', '));
       if (profile.medications?.length) setMedications(profile.medications.join(', '));
     }
-  }, []);
+  }, [router]);
 
   const executePipelineSubmission = (blobToSubmit: Blob) => {
     const reader = new FileReader();
@@ -61,6 +95,9 @@ export default function VoiceInputPage() {
         known_conditions: conditions,
         current_medications: medications,
         profile_id: activeProfile?.id,
+        patient_name: activeProfile?.full_name,
+        latitude: locationCoords?.latitude,
+        longitude: locationCoords?.longitude,
         dpdp_consent_verified: true,
       };
       
@@ -93,6 +130,35 @@ export default function VoiceInputPage() {
       <div className="text-center mb-10 animate-gentle-fade-in">
         <h1 className="text-4xl font-semibold text-foreground mb-3">Voice Input</h1>
         <p className="text-muted-foreground text-lg">Record or upload a patient consultation audio</p>
+      </div>
+
+      {/* Emergency SOS Banner (Zero-Latency Triage) */}
+      <div className="mb-8 p-4 bg-red-500/10 border-2 border-red-500/30 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm animate-gentle-fade-in">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-red-600 text-white flex items-center justify-center font-bold text-sm shrink-0 animate-pulse">
+            SOS
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-red-900 dark:text-red-200">Severe Medical Emergency?</h3>
+            <p className="text-xs text-red-700 dark:text-red-300">
+              Chest pain, choking, severe bleeding, or unconsciousness? Do not record audio. Call emergency services immediately.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
+          <a
+            href="tel:108"
+            className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-md transition-colors"
+          >
+            <PhoneCall className="w-3.5 h-3.5" /> Call 108
+          </a>
+          <a
+            href="tel:112"
+            className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-700 dark:text-red-300 border border-red-500/40 text-xs font-bold transition-colors"
+          >
+            Call 112
+          </a>
+        </div>
       </div>
 
       {activeProfile ? (
@@ -189,6 +255,39 @@ export default function VoiceInputPage() {
           </div>
         </div>
 
+        {/* Permission-based Geolocation with DPDP Notice */}
+        <div className="p-4 bg-muted/30 border border-border rounded-xl space-y-2 mb-8">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+              <MapPin className="w-4 h-4 text-primary" /> Emergency Location Sharing (Optional)
+            </span>
+            {locationCoords ? (
+              <span className="text-[11px] bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 px-2.5 py-0.5 rounded-full font-medium flex items-center gap-1">
+                <ShieldCheck className="w-3 h-3" /> Location Attached
+              </span>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={requestLocation}
+                disabled={isLocating}
+                className="text-xs h-7 rounded-lg gap-1"
+              >
+                <MapPin className="w-3 h-3" /> {isLocating ? 'Locating...' : 'Share Location'}
+              </Button>
+            )}
+          </div>
+          <p className="text-[11px] text-muted-foreground leading-relaxed">
+            Under India DPDP Act 2023, your coordinates are strictly utilized to coordinate emergency response (108/112) or identify nearest Primary Health Centres.
+          </p>
+          {locationError && (
+            <p className="text-[11px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
+              <AlertCircle className="w-3 h-3 shrink-0" /> {locationError}
+            </p>
+          )}
+        </div>
+
         <div className="border border-border rounded-xl overflow-hidden mb-8 bg-background/50">
           <button 
             onClick={() => setShowContext(!showContext)}
@@ -243,7 +342,7 @@ export default function VoiceInputPage() {
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-border">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-            <span>DPDP Act 2023 Compliant • 72h Audio Retention • 108/112 Emergency Referral</span>
+            <span>Privacy-First Architecture • 72h Audio Retention • 108/112 Emergency Referral</span>
           </div>
 
           <Button 

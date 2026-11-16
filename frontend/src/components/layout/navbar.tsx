@@ -14,6 +14,7 @@ import {
   Stethoscope,
   LogOut,
   Users,
+  PhoneCall,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -177,10 +178,28 @@ export function Navbar() {
               </Button>
             </Link>
           )}
+
+          {/* Direct Emergency SOS Action */}
+          <a
+            href="tel:108"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-destructive text-destructive-foreground font-bold text-xs shadow-sm hover:bg-destructive/90 transition-all shrink-0"
+            title="Emergency National Ambulance: Dial 108 immediately"
+          >
+            <PhoneCall className="w-3.5 h-3.5" />
+            <span>SOS 108</span>
+          </a>
         </div>
 
         {/* Mobile Hamburger Drawer */}
         <div className="md:hidden flex items-center gap-2">
+          <a
+            href="tel:108"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-destructive text-destructive-foreground font-bold text-xs shadow-sm hover:bg-destructive/90 transition-all shrink-0"
+            title="Emergency National Ambulance: Dial 108 immediately"
+          >
+            <PhoneCall className="w-3 h-3" />
+            <span>108</span>
+          </a>
           {isClient && isPatient && (
             <div className="w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-bold text-xs shrink-0">
               {activeProfile?.full_name ? activeProfile.full_name[0].toUpperCase() : 'P'}

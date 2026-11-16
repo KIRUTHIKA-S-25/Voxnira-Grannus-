@@ -77,9 +77,9 @@ export default function LoginPage() {
 
   // Staff login state
   const [staffRole, setStaffRole] = useState<'doctor' | 'nurse' | 'admin'>('doctor');
-  const [staffIdentifier, setStaffIdentifier] = useState('dr.rajan@hospital.in');
-  const [staffPassword, setStaffPassword] = useState('grannus_secure_doctor_2026');
-  const [regNumber, setRegNumber] = useState('TNMC-48291');
+  const [staffIdentifier, setStaffIdentifier] = useState('');
+  const [staffPassword, setStaffPassword] = useState('');
+  const [regNumber, setRegNumber] = useState('');
   const [council, setCouncil] = useState(STATE_COUNCILS[1]);
 
   // General state
@@ -614,16 +614,18 @@ export default function LoginPage() {
                     </div>
                   </div>
 
-                  {/* Dev Test Number Hint Box */}
-                  <div className="p-3 bg-muted/60 border border-border/80 rounded-xl text-xs space-y-1">
-                    <div className="font-medium text-foreground flex items-center gap-1.5">
-                      <ShieldCheck className="w-3.5 h-3.5 text-primary" />
-                      <span>Quick Test / Sandbox Access Numbers</span>
+                  {/* Dev Test Number Hint Box (only displayed in development mode) */}
+                  {process.env.NODE_ENV === 'development' && (
+                    <div className="p-3 bg-muted/60 border border-border/80 rounded-xl text-xs space-y-1">
+                      <div className="font-medium text-foreground flex items-center gap-1.5">
+                        <ShieldCheck className="w-3.5 h-3.5 text-primary" />
+                        <span>Quick Test / Sandbox Access Numbers</span>
+                      </div>
+                      <p className="text-muted-foreground">
+                        Use <span className="font-mono text-foreground font-semibold">+919876543210</span> (Code: <span className="font-mono font-semibold">123456</span>) to bypass external SMS network.
+                      </p>
                     </div>
-                    <p className="text-muted-foreground">
-                      Use <span className="font-mono text-foreground font-semibold">+919876543210</span> (Code: <span className="font-mono font-semibold">123456</span>) to bypass external SMS network.
-                    </p>
-                  </div>
+                  )}
 
                   <Button
                     type="submit"
@@ -737,9 +739,6 @@ export default function LoginPage() {
                   onChange={(e) => setStaffPassword(e.target.value)}
                   required
                 />
-                <p className="text-[11px] text-muted-foreground">
-                  Clinician credentials: <span className="font-mono">dr.rajan@hospital.in</span> / <span className="font-mono">grannus_secure_doctor_2026</span>
-                </p>
               </div>
 
               {staffRole === 'doctor' && (
@@ -803,7 +802,7 @@ export default function LoginPage() {
         <CardFooter className="flex flex-col text-center border-t border-border/60 pt-4 pb-4">
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground justify-center">
             <ShieldCheck className="w-4 h-4 text-emerald-600" />
-            <span>DPDP Act 2023 & MoHFW Telemedicine Compliant Session</span>
+            <span>Encrypted Session • Telemedicine Decision Support Prototype</span>
           </div>
         </CardFooter>
       </Card>

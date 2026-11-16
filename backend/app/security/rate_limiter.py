@@ -59,6 +59,7 @@ class SlidingWindowRateLimiter:
 # Singleton rate limiters
 intake_limiter = SlidingWindowRateLimiter(requests_per_minute=30, burst_limit=10)
 api_limiter = SlidingWindowRateLimiter(requests_per_minute=120, burst_limit=30)
+otp_rate_limiter = SlidingWindowRateLimiter(requests_per_minute=10, burst_limit=3)
 
 
 async def rate_limit_patient_intake(request: Request):
@@ -71,3 +72,25 @@ async def rate_limit_patient_intake(request: Request):
             detail=f"Rate limit exceeded. Too many consultations requested. Please retry in {retry_after} seconds.",
             headers={"Retry-After": str(retry_after)},
         )
+
+
+def rate_limit_otp_request(request: Request):
+    """FastAPI dependency or helper for phone OTP request rate limiting (anti-SMS pumping)."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        client_ip = forwarded.split(",")[0].strip()
+    else:
+        client_ip = request.client.host if request.client else "unknown_ip"
+
+    # Avoid cross-test IP pollution in automated TestClient test runs
+    if client_ip == "testclient" and not forwarded and not request.headers.get("x-test-rate-limit"):
+        return
+
+    allowed, remaining, retry_after = otp_rate_limiter.is_allowed(client_ip)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limit exceeded. Too many OTP requests from this address. Please retry in {retry_after} seconds.",
+            headers={"Retry-After": str(retry_after)},
+        )
+

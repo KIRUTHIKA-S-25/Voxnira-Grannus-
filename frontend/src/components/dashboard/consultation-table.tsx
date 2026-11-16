@@ -17,7 +17,8 @@ export function ConsultationTable({ consultations, onSelect }: { consultations: 
       <Table>
         <TableHeader className="bg-muted/30">
           <TableRow className="border-border">
-            <TableHead className="w-[150px]">Time</TableHead>
+            <TableHead className="w-[130px]">Time</TableHead>
+            <TableHead>Patient</TableHead>
             <TableHead>Language</TableHead>
             <TableHead className="hidden md:table-cell">Chief Complaint</TableHead>
             <TableHead>Priority</TableHead>
@@ -30,14 +31,22 @@ export function ConsultationTable({ consultations, onSelect }: { consultations: 
               className="cursor-pointer hover:bg-muted/30 transition-colors border-border"
               onClick={() => onSelect(c)}
             >
-              <TableCell className="text-muted-foreground whitespace-nowrap">
+              <TableCell className="text-muted-foreground whitespace-nowrap text-xs">
                 {c.created_at ? formatDistanceToNow(new Date(c.created_at), { addSuffix: true }) : 'Unknown'}
               </TableCell>
-              <TableCell className="font-medium">
-                {c.result?.patient_input?.language || 'Unknown'}
+              <TableCell>
+                <div className="font-semibold text-foreground text-xs leading-tight">
+                  {c.patient_name || c.guest_name || c.result?.clinical_summary?.stated_patient_name || 'Patient'}
+                </div>
+                {c.phone_number && (
+                  <div className="text-[10px] text-muted-foreground">{c.phone_number}</div>
+                )}
               </TableCell>
-              <TableCell className="hidden md:table-cell text-muted-foreground truncate max-w-[300px]">
-                {c.result?.clinical_summary?.chief_complaint || 'N/A'}
+              <TableCell className="font-medium text-xs">
+                {c.result?.patient_input?.language || c.patient_language || 'Unknown'}
+              </TableCell>
+              <TableCell className="hidden md:table-cell text-muted-foreground truncate max-w-[260px] text-xs">
+                {c.chief_complaint || c.result?.clinical_summary?.chief_complaint || 'N/A'}
               </TableCell>
               <TableCell>
                 <div className="flex items-center gap-1.5 flex-wrap">

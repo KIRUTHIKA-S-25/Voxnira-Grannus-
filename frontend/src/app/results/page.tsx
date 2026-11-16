@@ -16,7 +16,7 @@ import { VoiceThreadViewer } from '@/components/results/voice-thread-viewer';
 import { FhirExportButton } from '@/components/dashboard/fhir-export-button';
 import { VoiceReplyRecorder } from '@/components/dashboard/voice-reply-recorder';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Plus } from 'lucide-react';
+import { ArrowLeft, Plus, Pill, AlertCircle } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 function ResultsContent() {
@@ -25,7 +25,23 @@ function ResultsContent() {
   const id = searchParams?.get('id');
   
   const [result, setResult] = useState<PipelineResult | null>(null);
+  const [consultationMeta, setConsultationMeta] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [isDoctor, setIsDoctor] = useState(false);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('grannus_user');
+      if (stored) {
+        const u = JSON.parse(stored);
+        if (['doctor', 'admin'].includes(u.role)) {
+          setIsDoctor(true);
+        }
+      }
+    } catch {
+      setIsDoctor(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!id) {
@@ -36,6 +52,7 @@ function ResultsContent() {
     const fetchResult = async () => {
       try {
         const data = await getConsultationDetails(id);
+        setConsultationMeta(data);
         if (data && data.full_result) {
           setResult(data.full_result);
         } else if (data) {
@@ -82,20 +99,39 @@ function ResultsContent() {
         <div className="container mx-auto max-w-5xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
           <div>
             <h1 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-2">Priority Assessment</h1>
-            <PriorityBadge level={priority.level} confidence={priority.confidence} size="lg" />
+            <PriorityBadge
+              level={priority.level}
+              confidence={priority.confidence}
+              size="lg"
+              showConfidence={priority.model_used !== 'fail_to_review'}
+            />
             <div className="mt-3 flex flex-wrap gap-2">
-              {priority.reasons.map((r: string, i: number) => (
-                <span key={i} className="text-sm text-foreground bg-secondary/50 px-3 py-1 rounded-full">{r}</span>
-              ))}
+              {priority.reasons
+                .filter(
+                  (r: string) =>
+                    !['age_group', 'severity_unknown', 'duration_days', 'symptom_count', 'high_risk_symptom_count', 'pain_score', 'fever_score'].includes(r) &&
+                    !r.startsWith('Model:')
+                )
+                .map((r: string, i: number) => (
+                  <span key={i} className="text-sm text-foreground bg-secondary/50 px-3 py-1 rounded-full">
+                    {r}
+                  </span>
+                ))}
             </div>
           </div>
           
           <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-            <div className="w-full sm:w-auto">
-              <FhirExportButton result={result} />
-            </div>
-            <Button variant="outline" className="flex-1 md:flex-none gap-2 rounded-full border-border bg-background" onClick={() => router.push('/dashboard')}>
-              <ArrowLeft className="w-4 h-4" /> Dashboard
+            {isDoctor && (
+              <div className="w-full sm:w-auto">
+                <FhirExportButton result={result} />
+              </div>
+            )}
+            <Button
+              variant="outline"
+              className="flex-1 md:flex-none gap-2 rounded-full border-border bg-background"
+              onClick={() => router.push(isDoctor ? '/dashboard' : '/history')}
+            >
+              <ArrowLeft className="w-4 h-4" /> {isDoctor ? 'Dashboard' : 'History'}
             </Button>
             <Button className="flex-1 md:flex-none gap-2 rounded-full bg-primary" onClick={() => router.push('/input')}>
               <Plus className="w-4 h-4" /> New
@@ -105,6 +141,17 @@ function ResultsContent() {
       </div>
 
       <div className="container mx-auto max-w-5xl px-4 space-y-10">
+        {/* Patient-friendly alert when AI extraction was incomplete (B7) */}
+        {priority.model_used === 'fail_to_review' && (
+          <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-3 text-amber-900 dark:text-amber-200">
+            <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+            <div>
+              <p className="font-semibold text-sm">We couldn't clearly understand your voice recording.</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Please try recording again with less background noise, or a duty doctor will review your case directly today.</p>
+            </div>
+          </div>
+        )}
+
         {/* Prominent Emergency Screen for Critical Cases */}
         {(priority.urgency_tier === 'emergency' || (priority.level === 'HIGH' && (priority.emergency_override || hasCriticalFlags))) && (
           <motion.section initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.3 }}>
@@ -125,6 +172,76 @@ function ResultsContent() {
         {priority.level === 'LOW' && home_remedy_guidance && (
           <motion.section initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }}>
             <HomeRemedy data={home_remedy_guidance} />
+          </motion.section>
+        )}
+
+        {/* Official Doctor Prescription Card (Telemedicine Guidelines 2020) */}
+        {consultationMeta?.prescriptions && consultationMeta.prescriptions.length > 0 && (
+          <motion.section
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ delay: 0.11 }}
+            className="p-6 bg-emerald-500/10 border-2 border-emerald-500/30 rounded-2xl shadow-sm space-y-4"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-emerald-500/20 gap-2">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-sm">
+                  <Pill className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-foreground">Official Clinical Prescription</h3>
+                  <p className="text-xs text-muted-foreground">Authorized by attending Registered Medical Practitioner (RMP)</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                {consultationMeta.doctor_registration_number && (
+                  <span className="bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 font-mono px-3 py-1 rounded-full font-bold border border-emerald-500/30">
+                    NMC / Council: {consultationMeta.doctor_registration_number}
+                  </span>
+                )}
+                {consultationMeta.prescribed_by && (
+                  <span className="text-muted-foreground">
+                    Dr. {consultationMeta.prescribed_by}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="divide-y divide-emerald-500/15">
+              {consultationMeta.prescriptions.map((rx: any, idx: number) => (
+                <div key={idx} className="py-3 first:pt-0 last:pb-0 flex flex-col md:flex-row md:items-center justify-between gap-2">
+                  <div className="space-y-0.5">
+                    <span className="font-bold text-foreground text-sm flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                      {rx.medication_name}
+                      <span className="text-xs font-normal text-muted-foreground">({rx.dosage})</span>
+                    </span>
+                    {rx.instructions && (
+                      <p className="text-xs text-muted-foreground italic pl-4">
+                        Instructions: {rx.instructions}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 text-xs font-mono text-muted-foreground pl-4 md:pl-0">
+                    <span className="bg-background px-2.5 py-1 rounded-lg border border-border">
+                      {rx.frequency}
+                    </span>
+                    <span className="bg-background px-2.5 py-1 rounded-lg border border-border">
+                      {rx.duration}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="text-[11px] text-muted-foreground flex items-center justify-between pt-2 border-t border-emerald-500/15">
+              <span>Under India Telemedicine Practice Guidelines 2020. Valid for authorized pharmacy dispensing.</span>
+              {consultationMeta.prescription_timestamp && (
+                <span className="font-mono">
+                  {new Date(consultationMeta.prescription_timestamp * 1000).toLocaleDateString()}
+                </span>
+              )}
+            </div>
           </motion.section>
         )}
 

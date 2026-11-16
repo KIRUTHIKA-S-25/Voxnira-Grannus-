@@ -47,6 +47,7 @@ class DurationUnit(str, Enum):
 
 class InfoSource(str, Enum):
     PATIENT_REPORTED = "patient_reported"
+    PRIOR_RECORD_DERIVED = "prior_record_derived"
     AI_INFERRED = "ai_inferred"
 
 
@@ -151,6 +152,10 @@ class StructuredMedicalSummary(BaseModel):
     )
     extraction_notes: Optional[str] = Field(
         default=None, description="Short note about ambiguity, negation, code-switching, etc. that a doctor should know about."
+    )
+    stated_patient_name: Optional[str] = Field(
+        default=None,
+        description="Patient's stated name if mentioned in the speech/transcript (e.g. 'My name is Ramesh', 'I am Priya'). Null if not stated.",
     )
 
 
@@ -292,6 +297,7 @@ class PatientInput(BaseModel):
 class ClinicalSummary(BaseModel):
     """Grouped clinical extraction for the final API response."""
     chief_complaint: str = Field(default="")
+    stated_patient_name: Optional[str] = Field(default=None, description="Patient name if explicitly spoken during voice recording.")
     symptoms: List[Symptom] = Field(default_factory=list)
     existing_conditions: List[str] = Field(default_factory=list)
     medications: List[str] = Field(default_factory=list)
