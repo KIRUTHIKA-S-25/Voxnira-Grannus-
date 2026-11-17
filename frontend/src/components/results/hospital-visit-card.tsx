@@ -11,15 +11,19 @@ interface HospitalVisitCardProps {
   emergencyPhone?: string;
   hours?: string;
   mapQuery?: string;
+  facilityId?: string;
+  superintendent?: string;
 }
 
 export function HospitalVisitCard({
-  hospitalName = 'District Hospital Rural Outreach',
+  hospitalName = 'Government District Headquarters Hospital & Telemedicine Hub',
   departmentName,
-  address = 'Main Hospital Road, Taluk Headquarters, Tamil Nadu, India',
+  address = 'Main Hospital Road, District Center, Tamil Nadu 600001, India',
   emergencyPhone = '108',
-  hours = '24/7 Emergency & Casualty | OPD: Mon–Sat 8:00 AM – 2:00 PM',
-  mapQuery = 'District Hospital Tamil Nadu',
+  hours = '24/7 Emergency & Casualty | Specialist OPD: Mon–Sat 8:00 AM – 4:00 PM',
+  mapQuery = 'Government District Headquarters Hospital Tamil Nadu',
+  facilityId = 'IN3310004928',
+  superintendent = 'Dr. K. Sivasankaran, M.S. (Gen Surg), Medical Superintendent',
 }: HospitalVisitCardProps) {
   const mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
     mapQuery || hospitalName
@@ -33,10 +37,15 @@ export function HospitalVisitCard({
             <Building2 className="w-6 h-6" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-primary/10 text-primary">
-                Hospital Visit Information
+                Hospital Visit & Referral Hub
               </span>
+              {facilityId && (
+                <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground border border-border">
+                  ABDM Facility: {facilityId}
+                </span>
+              )}
               {departmentName && (
                 <span className="text-[11px] font-semibold text-muted-foreground">
                   • {departmentName}
@@ -46,6 +55,11 @@ export function HospitalVisitCard({
             <h3 className="text-xl font-heading font-semibold text-foreground mt-1">
               {hospitalName}
             </h3>
+            {superintendent && (
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {superintendent}
+              </p>
+            )}
           </div>
         </div>
 

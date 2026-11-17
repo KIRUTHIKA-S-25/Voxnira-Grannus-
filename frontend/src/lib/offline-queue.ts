@@ -7,6 +7,7 @@
  */
 
 import { getAuthHeaders } from './api';
+import { audioDataToBlob } from './utils';
 
 export interface OfflineConsultation {
   id: string;
@@ -79,9 +80,8 @@ export async function syncOfflineConsultations(
   for (let i = 0; i < queue.length; i++) {
     const item = queue[i];
     try {
-      // Convert base64 back to Blob for multipart upload
-      const res = await fetch(item.payload.audio);
-      const audioBlob = await res.blob();
+      // Convert base64 back to Blob for multipart upload safely without network fetch
+      const audioBlob = await audioDataToBlob(item.payload.audio);
 
       const formData = new FormData();
       formData.append('audio', audioBlob, 'patient_recording.wav');

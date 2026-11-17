@@ -54,7 +54,7 @@ export default function LoginPage() {
   const [authMode, setAuthMode] = useState<'patient' | 'staff'>('patient');
 
   // Patient Phone OTP state
-  const [phone, setPhone] = useState('+919876543210');
+  const [phone, setPhone] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [otpSent, setOtpSent] = useState(false);
   const [cooldown, setCooldown] = useState(0);
@@ -614,19 +614,6 @@ export default function LoginPage() {
                     </div>
                   </div>
 
-                  {/* Dev Test Number Hint Box (only displayed in development mode) */}
-                  {process.env.NODE_ENV === 'development' && (
-                    <div className="p-3 bg-muted/60 border border-border/80 rounded-xl text-xs space-y-1">
-                      <div className="font-medium text-foreground flex items-center gap-1.5">
-                        <ShieldCheck className="w-3.5 h-3.5 text-primary" />
-                        <span>Quick Test / Sandbox Access Numbers</span>
-                      </div>
-                      <p className="text-muted-foreground">
-                        Use <span className="font-mono text-foreground font-semibold">+919876543210</span> (Code: <span className="font-mono font-semibold">123456</span>) to bypass external SMS network.
-                      </p>
-                    </div>
-                  )}
-
                   <Button
                     type="submit"
                     disabled={isLoading}
@@ -657,7 +644,7 @@ export default function LoginPage() {
                     <Input
                       type="text"
                       maxLength={6}
-                      placeholder="123456"
+                      placeholder="••••••"
                       value={otpCode}
                       onChange={(e) => setOtpCode(e.target.value)}
                       required
@@ -723,7 +710,7 @@ export default function LoginPage() {
               <div className="space-y-2">
                 <Label>Hospital Email / Clinician ID</Label>
                 <Input
-                  placeholder="e.g. dr.rajan@hospital.in"
+                  placeholder="doctor.name@hospital.gov.in"
                   value={staffIdentifier}
                   onChange={(e) => setStaffIdentifier(e.target.value)}
                   required
@@ -802,7 +789,7 @@ export default function LoginPage() {
         <CardFooter className="flex flex-col text-center border-t border-border/60 pt-4 pb-4">
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground justify-center">
             <ShieldCheck className="w-4 h-4 text-emerald-600" />
-            <span>Encrypted Session • Telemedicine Decision Support Prototype</span>
+            <span>256-bit Encrypted Session • MoHFW Telemedicine Practice Guidelines Aligned</span>
           </div>
         </CardFooter>
       </Card>

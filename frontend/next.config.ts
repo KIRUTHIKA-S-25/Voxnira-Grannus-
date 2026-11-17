@@ -33,7 +33,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline';",
       "img-src 'self' data: blob: https:;",
       "font-src 'self' data:;",
-      "connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 https: ws: wss:;",
+      "connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 https: data: blob: ws: wss:;",
       "media-src 'self' blob: data: https:;",
       "frame-ancestors 'none';",
     ].join(" "),

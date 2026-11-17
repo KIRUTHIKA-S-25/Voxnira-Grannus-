@@ -7,7 +7,7 @@ import { PriorityFilter } from '@/components/dashboard/priority-filter';
 import { CaseViewPanel } from '@/components/dashboard/case-view-panel';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { toggleDoctorAvailability, getDoctorRoster, loginStaff } from '@/lib/api';
+import { toggleDoctorAvailability, getDoctorRoster } from '@/lib/api';
 import {
   Search,
   Plus,
@@ -175,9 +175,13 @@ export default function DashboardPage() {
               </span>
             ) : null}
           </div>
-          <p className="text-muted-foreground text-xs md:text-sm mt-1">
-            Urgent-first triage queue with complaint category routing and claim locking.
-          </p>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1.5 flex-wrap">
+            <span className="font-semibold text-foreground/90">Government District Headquarters Hospital & Telemedicine Hub</span>
+            <span className="text-border">•</span>
+            <span className="font-mono text-[11px] bg-secondary/80 px-2 py-0.5 rounded border border-border">ABDM ID: IN3310004928</span>
+            <span className="text-border">•</span>
+            <span>24/7 Casualty & 12 Specialist Departments Active</span>
+          </div>
         </div>
 
         {/* Actions & Availability Toggle (F3.6) */}

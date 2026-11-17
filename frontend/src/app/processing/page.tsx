@@ -6,6 +6,7 @@ import { PipelineFlow } from '@/components/pipeline/pipeline-flow';
 import { ProcessingZen } from '@/components/pipeline/processing-zen';
 import { Button } from '@/components/ui/button';
 import { AlertCircle } from 'lucide-react';
+import { audioDataToBlob } from '@/lib/utils';
 
 export default function ProcessingPage() {
   const router = useRouter();
@@ -33,9 +34,8 @@ export default function ProcessingPage() {
       const payload = JSON.parse(payloadStr);
       cachedPayloadRef.current = payload;
 
-      // Convert base64 back to Blob
-      fetch(payload.audio)
-        .then(res => res.blob())
+      // Convert base64 back to Blob safely without network fetch
+      audioDataToBlob(payload.audio)
         .then(blob => {
           processAudio({
             audio: blob,

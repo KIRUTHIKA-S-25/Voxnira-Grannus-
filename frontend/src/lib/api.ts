@@ -127,6 +127,49 @@ export interface AcousticBiomarkerResult {
   distress_level: 'none' | 'mild' | 'moderate' | 'severe'
 }
 
+export interface AssignedDoctor {
+  id: string
+  full_name: string
+  specialty: string
+  qualifications?: string
+  registration_number?: string
+  state_council?: string
+  department_code?: string
+  department_name?: string
+  opd_room?: string
+  schedule?: Record<string, string>
+  experience?: string
+  languages?: string[]
+}
+
+export interface HospitalInfo {
+  name: string
+  code: string
+  abdm_facility_id?: string
+  facility_type?: string
+  location?: string
+  emergency_phone?: string
+  national_emergency?: string
+  casualty_phone?: string
+  opd_timings?: string
+  medical_superintendent?: string
+  network?: string
+}
+
+export interface DepartmentInfo {
+  code: string
+  name: string
+  category?: string
+  rationale?: string
+  doctor_selection_rationale?: string
+}
+
+export interface RoutingInfo {
+  token: string
+  estimated_wait_minutes: number
+  status: string
+}
+
 export interface PipelineResult {
   request_id: string
   patient_input: PatientInput
@@ -139,6 +182,10 @@ export interface PipelineResult {
   home_remedy_guidance: HomeRemedyGuidance | null
   doctor_translated_summary: DoctorTranslatedSummary | null
   acoustic_biomarkers: AcousticBiomarkerResult | null
+  assigned_doctor?: AssignedDoctor | null
+  hospital?: HospitalInfo | null
+  department?: DepartmentInfo | null
+  routing?: RoutingInfo | null
   audio_preprocessing: Record<string, unknown> | null
   pipeline_stages: Record<string, unknown> | null
 }
@@ -303,8 +350,6 @@ export async function loginAsClinician(options: {
   }
   return data.token;
 }
-
-export const loginAsDemoClinician = loginAsClinician;
 
 /**
  * Export a pipeline result as an ABDM-compliant FHIR R4 JSON bundle.

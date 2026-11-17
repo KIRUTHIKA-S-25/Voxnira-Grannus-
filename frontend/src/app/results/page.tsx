@@ -12,6 +12,7 @@ import { AcousticBiomarkerCard } from '@/components/results/acoustic-biomarker-c
 import { EmergencyScreen } from '@/components/results/emergency-screen';
 import { FollowUpCard } from '@/components/results/follow-up-card';
 import { HospitalVisitCard } from '@/components/results/hospital-visit-card';
+import { AssignedSpecialistCard } from '@/components/results/assigned-specialist-card';
 import { VoiceThreadViewer } from '@/components/results/voice-thread-viewer';
 import { FhirExportButton } from '@/components/dashboard/fhir-export-button';
 import { VoiceReplyRecorder } from '@/components/dashboard/voice-reply-recorder';
@@ -262,9 +263,28 @@ function ResultsContent() {
           />
         </motion.section>
 
+        {/* Assigned Specialist Consultation Card */}
+        <motion.section initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.135 }}>
+          <AssignedSpecialistCard
+            doctor={consultationMeta?.assigned_doctor || result.assigned_doctor}
+            department={consultationMeta?.department || result.department}
+            routing={consultationMeta?.routing || result.routing}
+            urgencyTier={priority.urgency_tier}
+          />
+        </motion.section>
+
         {/* Official Hospital Visit Card (F2.9) */}
         <motion.section initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.14 }}>
-          <HospitalVisitCard />
+          <HospitalVisitCard
+            hospitalName={(consultationMeta?.hospital || result.hospital)?.name}
+            departmentName={(consultationMeta?.department || result.department)?.name}
+            address={(consultationMeta?.hospital || result.hospital)?.address}
+            emergencyPhone={(consultationMeta?.hospital || result.hospital)?.emergency_phone}
+            hours={(consultationMeta?.hospital || result.hospital)?.opd_hours}
+            mapQuery={(consultationMeta?.hospital || result.hospital)?.name}
+            facilityId={(consultationMeta?.hospital || result.hospital)?.facility_id}
+            superintendent={(consultationMeta?.hospital || result.hospital)?.superintendent}
+          />
         </motion.section>
 
         {/* Doctor Voice Reply to Patient */}
