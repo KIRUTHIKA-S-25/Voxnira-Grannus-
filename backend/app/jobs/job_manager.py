@@ -188,6 +188,8 @@ class JobManager:
                     urgency_tier=result.priority.urgency_tier,
                 )
 
+                from app.routing import DEPARTMENT_CODES
+                from app.db import _MEM_HOSPITALS
                 all_doctors = get_staff_doctors()
                 assigned_doc, doc_selection_rationale = select_best_doctor(
                     doctors=all_doctors,
@@ -195,6 +197,59 @@ class JobManager:
                     patient_language=result.patient_input.language,
                 )
                 assigned_doc_id = assigned_doc.get("id") if assigned_doc else None
+
+                hosp = _MEM_HOSPITALS[0]
+                doc_dict = None
+                if assigned_doc:
+                    doc_dict = {
+                        "id": assigned_doc.get("id"),
+                        "full_name": assigned_doc.get("full_name"),
+                        "specialty": assigned_doc.get("specialty"),
+                        "qualifications": assigned_doc.get("qualifications", "MBBS, MD"),
+                        "registration_number": assigned_doc.get("doctor_registration_number"),
+                        "state_council": assigned_doc.get("state_council"),
+                        "department_code": assigned_doc.get("department_code") or dept_code,
+                        "department_name": DEPARTMENT_CODES.get(dept_code, dept_code),
+                        "opd_room": assigned_doc.get("opd_room", "Room 101, Ground Floor OPD Block"),
+                        "schedule": assigned_doc.get("weekly_schedule"),
+                        "experience": assigned_doc.get("experience", "12 Years Clinical Practice"),
+                        "languages": assigned_doc.get("languages", ["English"]),
+                    }
+
+                hosp_dict = {
+                    "name": hosp.get("name"),
+                    "code": hosp.get("code"),
+                    "abdm_facility_id": hosp.get("abdm_facility_id"),
+                    "facility_type": hosp.get("facility_type"),
+                    "location": hosp.get("location"),
+                    "emergency_phone": hosp.get("emergency_phone"),
+                    "national_emergency": hosp.get("national_emergency", "112"),
+                    "casualty_phone": hosp.get("casualty_phone"),
+                    "opd_timings": hosp.get("opd_timings"),
+                    "medical_superintendent": hosp.get("medical_superintendent"),
+                    "network": hosp.get("network"),
+                }
+
+                dept_dict = {
+                    "code": dept_code,
+                    "name": DEPARTMENT_CODES.get(dept_code, dept_code),
+                    "category": complaint_cat,
+                    "rationale": routing_rationale,
+                    "doctor_selection_rationale": doc_selection_rationale,
+                }
+
+                wait_mins = 0 if result.priority.urgency_tier == "emergency" else (15 if result.priority.urgency_tier == "doctor_today" else 30)
+                token_prefix = dept_code[:3].upper()
+                routing_dict = {
+                    "token": f"OPD-{token_prefix}-{result.request_id[-4:].upper()}",
+                    "estimated_wait_minutes": wait_mins,
+                    "status": "Priority Triage Confirmed",
+                }
+
+                result.assigned_doctor = doc_dict
+                result.hospital = hosp_dict
+                result.department = dept_dict
+                result.routing = routing_dict
 
                 stated_name = getattr(result.clinical_summary, "stated_patient_name", None) if result.clinical_summary else None
                 save_consultation(result.request_id, {
@@ -210,6 +265,10 @@ class JobManager:
                     "urgency_tier": result.priority.urgency_tier,
                     "department_id": dept_code,
                     "assigned_doctor_id": assigned_doc_id,
+                    "assigned_doctor": doc_dict,
+                    "hospital": hosp_dict,
+                    "department": dept_dict,
+                    "routing": routing_dict,
                     "original_transcript": result.patient_input.transcript_original,
                     "english_transcript": result.patient_input.transcript_english,
                     "complaint_category": complaint_cat,

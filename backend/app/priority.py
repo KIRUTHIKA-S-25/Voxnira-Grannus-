@@ -506,6 +506,28 @@ def determine_urgency_tier(
     return UrgencyTier.SELF_CARE, 3
 
 
+def clean_priority_reasons(raw_reasons: list[str]) -> list[str]:
+    """Filter out raw internal ML column identifiers from clinician and patient reason lists."""
+    cleaned = []
+    internal_names = {
+        "gender_female", "gender_male", "gender_other",
+        "age_group", "severity_unknown", "duration_days",
+        "symptom_count", "high_risk_symptom_count", "pain_score",
+        "fever_score", "downgraded_low_confidence",
+    }
+    for r in raw_reasons:
+        r_str = str(r).strip()
+        if r_str in internal_names:
+            continue
+        if r_str.startswith("symptom_"):
+            cleaned.append(f"Reported symptom: {r_str[len('symptom_'):].replace('_', ' ')}")
+        elif r_str.startswith("condition_"):
+            cleaned.append(f"Pre-existing condition: {r_str[len('condition_'):].replace('_', ' ')}")
+        else:
+            cleaned.append(r_str)
+    return cleaned
+
+
 def assess_priority(
     summary: StructuredMedicalSummary,
     patient_context: Optional[dict] = None,
@@ -629,7 +651,7 @@ def assess_priority(
                 confidence=confidence,
                 emergency_override=False,
                 triggered_rules=triggered_rules,
-                reasons=reasons,
+                reasons=clean_priority_reasons(reasons),
                 score=rule_score,
                 model_used="ml_random_forest",
             )

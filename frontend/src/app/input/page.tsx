@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AudioRecorder } from '@/components/voice/audio-recorder';
 import { FileUploader } from '@/components/voice/file-uploader';
-import { SUPPORTED_LANGUAGES, getActiveProfile, PatientProfile } from '@/lib/api';
+import { SUPPORTED_LANGUAGES, getActiveProfile, PatientProfile, triggerEmergencySOS } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronDown, ChevronUp, ShieldCheck, PhoneCall, MapPin, AlertCircle } from 'lucide-react';
 import { ConsentDialog } from '@/components/voice/consent-dialog';
+import { setPipelinePayload } from '@/lib/pipeline-store';
 
 export default function VoiceInputPage() {
   const router = useRouter();
@@ -61,6 +62,47 @@ export default function VoiceInputPage() {
   };
 
   const [isClient, setIsClient] = useState(false);
+  const [isSendingSOS, setIsSendingSOS] = useState(false);
+  const [sosStatus, setSosStatus] = useState<string | null>(null);
+
+  const handleTriggerSOS = async () => {
+    setIsSendingSOS(true);
+    setSosStatus('Acquiring location & alerting casualty dispatch...');
+
+    let currentCoords = locationCoords;
+    if (!currentCoords && typeof window !== 'undefined' && navigator.geolocation) {
+      try {
+        const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 4000 });
+        });
+        currentCoords = {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+        };
+        setLocationCoords(currentCoords);
+      } catch {
+        // Continue dispatch even without GPS
+      }
+    }
+
+    try {
+      const resp = await triggerEmergencySOS({
+        latitude: currentCoords?.latitude,
+        longitude: currentCoords?.longitude,
+        patient_name: activeProfile?.full_name || 'Emergency Patient',
+      });
+      setSosStatus(`SOS Dispatched! Ref #${resp.dispatch_id.slice(0, 8)}. Connecting to 108...`);
+      setTimeout(() => {
+        window.location.href = 'tel:108';
+      }, 700);
+    } catch {
+      setSosStatus('Connecting to 108...');
+      window.location.href = 'tel:108';
+    } finally {
+      setIsSendingSOS(false);
+    }
+  };
+
   useEffect(() => {
     setIsClient(true);
     const token = typeof window !== 'undefined' ? (localStorage.getItem('grannus_auth_token') || localStorage.getItem('grannus_user')) : null;
@@ -81,29 +123,24 @@ export default function VoiceInputPage() {
   }, [router]);
 
   const executePipelineSubmission = (blobToSubmit: Blob) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(blobToSubmit);
-    reader.onloadend = () => {
-      const base64Audio = reader.result as string;
-      const payload = {
-        audio: base64Audio,
-        language_code: language,
-        doctor_preferred_language: doctorLanguage,
-        age,
-        gender,
-        reported_duration: duration,
-        known_conditions: conditions,
-        current_medications: medications,
-        profile_id: activeProfile?.id,
-        patient_name: activeProfile?.full_name,
-        latitude: locationCoords?.latitude,
-        longitude: locationCoords?.longitude,
-        dpdp_consent_verified: true,
-      };
-      
-      sessionStorage.setItem('grannus_pipeline_payload', JSON.stringify(payload));
-      router.push('/processing');
+    const payload = {
+      audio: blobToSubmit,
+      language_code: language,
+      doctor_preferred_language: doctorLanguage,
+      age,
+      gender,
+      reported_duration: duration,
+      known_conditions: conditions,
+      current_medications: medications,
+      profile_id: activeProfile?.id,
+      patient_name: activeProfile?.full_name,
+      latitude: locationCoords?.latitude,
+      longitude: locationCoords?.longitude,
+      dpdp_consent_verified: true,
     };
+
+    setPipelinePayload(payload);
+    router.push('/processing');
   };
 
   const handleProcessClick = () => {
@@ -132,7 +169,7 @@ export default function VoiceInputPage() {
         <p className="text-muted-foreground text-lg">Record or upload a patient consultation audio</p>
       </div>
 
-      {/* Emergency SOS Banner (Zero-Latency Triage) */}
+      {/* Emergency SOS Banner (Zero-Latency Triage with GPS Location Dispatch) */}
       <div className="mb-8 p-4 bg-red-500/10 border-2 border-red-500/30 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm animate-gentle-fade-in">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-red-600 text-white flex items-center justify-center font-bold text-sm shrink-0 animate-pulse">
@@ -141,22 +178,30 @@ export default function VoiceInputPage() {
           <div>
             <h3 className="text-sm font-bold text-red-900 dark:text-red-200">Severe Medical Emergency?</h3>
             <p className="text-xs text-red-700 dark:text-red-300">
-              Chest pain, choking, severe bleeding, or unconsciousness? Do not record audio. Call emergency services immediately.
+              Chest pain, choking, severe bleeding, or unconsciousness? Do not record audio. Dispatch immediate emergency alert with your live GPS location.
             </p>
+            {sosStatus && (
+              <p className="text-xs font-semibold text-red-800 dark:text-red-200 mt-1 animate-pulse">
+                {sosStatus}
+              </p>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
-          <a
-            href="tel:108"
-            className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-md transition-colors"
+          <button
+            type="button"
+            onClick={handleTriggerSOS}
+            disabled={isSendingSOS}
+            className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2.5 min-h-[44px] rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-md transition-colors active:scale-95 cursor-pointer disabled:opacity-75"
           >
-            <PhoneCall className="w-3.5 h-3.5" /> Call 108
-          </a>
+            <PhoneCall className="w-3.5 h-3.5" />
+            <span>{isSendingSOS ? 'Transmitting GPS...' : 'Broadcast SOS & Call 108'}</span>
+          </button>
           <a
             href="tel:112"
-            className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-700 dark:text-red-300 border border-red-500/40 text-xs font-bold transition-colors"
+            className="inline-flex items-center justify-center gap-1 px-3 py-2.5 min-h-[44px] rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-700 dark:text-red-300 border border-red-500/40 text-xs font-bold transition-colors"
           >
-            Call 112
+            112
           </a>
         </div>
       </div>

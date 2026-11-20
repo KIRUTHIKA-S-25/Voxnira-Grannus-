@@ -113,9 +113,9 @@ export default function LandingPage() {
                 transition={{ delay: i * 0.05 }}
                 className="px-6 py-3 bg-card border border-border rounded-full text-foreground shadow-sm hover:shadow-md transition-shadow cursor-default flex items-center gap-2"
               >
-                <span className="font-medium">{lang.name}</span>
-                <span className="text-muted-foreground/60 text-sm">|</span>
-                <span className="text-muted-foreground text-sm">{lang.nativeName}</span>
+                <span className="font-semibold">{lang.name}</span>
+                <span className="text-foreground/40 text-sm">|</span>
+                <span className="text-foreground/80 text-sm font-medium">{lang.nativeName}</span>
               </motion.div>
             ))}
           </div>

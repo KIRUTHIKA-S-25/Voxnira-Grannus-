@@ -264,11 +264,11 @@ export default function LoginPage() {
         <p className="text-muted-foreground text-sm mt-1">
           {authMode === 'patient'
             ? 'Voice Bridge with Urgency Routing — RuralCare AI'
-            : 'Telemedicine Practice Guidelines 2020 Registered Medical Practitioner Verification'}
+            : 'Clinician Workstation Access & Verification'}
         </p>
 
         {/* Role Toggle Switch */}
-        <div className="flex bg-muted p-1 rounded-xl mt-5 border border-border">
+        <div className="flex bg-muted p-1.5 rounded-xl mt-5 border border-border">
           <button
             type="button"
             onClick={() => {
@@ -276,10 +276,10 @@ export default function LoginPage() {
               setErrorMessage('');
               setSuccessMessage('');
             }}
-            className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
+            className={`flex-1 min-h-[44px] py-2.5 px-4 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
               authMode === 'patient'
                 ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
+                : 'text-foreground/75 hover:text-foreground'
             }`}
           >
             Patient (Phone OTP)
@@ -291,10 +291,10 @@ export default function LoginPage() {
               setErrorMessage('');
               setSuccessMessage('');
             }}
-            className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
+            className={`flex-1 min-h-[44px] py-2.5 px-4 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
               authMode === 'staff'
                 ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
+                : 'text-foreground/75 hover:text-foreground'
             }`}
           >
             Doctor & Staff
@@ -369,37 +369,37 @@ export default function LoginPage() {
                         <button
                           type="button"
                           onClick={() => setShowAddProfile(false)}
-                          className="text-xs text-muted-foreground hover:text-foreground"
+                          className="min-h-[44px] inline-flex items-center text-xs font-semibold text-foreground/80 hover:text-foreground cursor-pointer"
                         >
                           Cancel
                         </button>
                       </div>
 
                       <div className="space-y-1">
-                        <Label className="text-xs">Full Name</Label>
+                        <Label className="text-xs font-medium">Full Name</Label>
                         <Input
                           placeholder="e.g. Ramesh Kumar"
                           value={newFullName}
                           onChange={(e) => setNewFullName(e.target.value)}
                           required
-                          className="h-9"
+                          className="h-11 min-h-[44px]"
                         />
                       </div>
 
                       <div className="grid grid-cols-2 gap-2">
                         <div className="space-y-1">
-                          <Label className="text-xs">Age</Label>
+                          <Label className="text-xs font-medium">Age</Label>
                           <Input
                             placeholder="e.g. 45"
                             value={newAge}
                             onChange={(e) => setNewAge(e.target.value)}
-                            className="h-9"
+                            className="h-11 min-h-[44px]"
                           />
                         </div>
                         <div className="space-y-1">
-                          <Label className="text-xs">Gender</Label>
+                          <Label className="text-xs font-medium">Gender</Label>
                           <Select value={newGender} onValueChange={(val) => setNewGender(val || 'female')}>
-                            <SelectTrigger className="h-9">
+                            <SelectTrigger className="h-11 min-h-[44px]">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -413,9 +413,9 @@ export default function LoginPage() {
 
                       <div className="grid grid-cols-2 gap-2">
                         <div className="space-y-1">
-                          <Label className="text-xs">Relation</Label>
+                          <Label className="text-xs font-medium">Relation</Label>
                           <Select value={newRelation} onValueChange={(val) => setNewRelation(val || 'self')}>
-                            <SelectTrigger className="h-9">
+                            <SelectTrigger className="h-11 min-h-[44px]">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -429,9 +429,9 @@ export default function LoginPage() {
                           </Select>
                         </div>
                         <div className="space-y-1">
-                          <Label className="text-xs">Preferred Language</Label>
+                          <Label className="text-xs font-medium">Preferred Language</Label>
                           <Select value={newLanguage} onValueChange={(val) => setNewLanguage(val || 'ta-IN')}>
-                            <SelectTrigger className="h-9">
+                            <SelectTrigger className="h-11 min-h-[44px]">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -445,18 +445,18 @@ export default function LoginPage() {
                       </div>
 
                       <div className="space-y-1">
-                        <Label className="text-xs">Optional 4-Digit Privacy PIN</Label>
+                        <Label className="text-xs font-medium">Optional 4-Digit Privacy PIN</Label>
                         <Input
                           type="password"
                           maxLength={4}
                           placeholder="Leave blank for open access"
                           value={newPin}
                           onChange={(e) => setNewPin(e.target.value)}
-                          className="h-9 text-xs"
+                          className="h-11 min-h-[44px] text-sm"
                         />
                       </div>
 
-                      <Button type="submit" disabled={isLoading} className="w-full mt-2 h-9 text-xs">
+                      <Button type="submit" disabled={isLoading} className="w-full mt-3 h-11 min-h-[44px] text-sm font-semibold">
                         {isLoading ? 'Creating...' : 'Save & Select Profile'}
                       </Button>
                     </form>
@@ -494,7 +494,7 @@ export default function LoginPage() {
                         type="button"
                         variant="outline"
                         onClick={() => setShowAddProfile(true)}
-                        className="w-full h-10 border-dashed gap-2 text-xs"
+                        className="w-full h-11 min-h-[44px] border-dashed gap-2 text-sm font-semibold"
                       >
                         <PlusCircle className="w-4 h-4" />
                         Add Family Member
@@ -510,20 +510,20 @@ export default function LoginPage() {
                       <AlertTriangle className="w-5 h-5 text-destructive shrink-0" />
                       <span>Immediate Emergency Protocol (108 / 112)</span>
                     </div>
-                    <p className="text-xs text-foreground/80 leading-relaxed">
+                    <p className="text-xs text-foreground/90 font-medium leading-relaxed">
                       For chest pain, difficulty breathing, heavy bleeding, or severe trauma, call ambulance emergency services immediately.
                     </p>
                     <div className="flex gap-2 pt-1">
                       <a
                         href="tel:108"
-                        className="flex-1 inline-flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-destructive text-destructive-foreground font-bold text-xs shadow-sm hover:opacity-90 transition-opacity"
+                        className="flex-1 inline-flex items-center justify-center gap-2 min-h-[44px] py-2.5 px-4 rounded-lg bg-destructive text-destructive-foreground font-bold text-xs shadow-sm hover:opacity-90 transition-opacity"
                       >
                         <PhoneCall className="w-3.5 h-3.5" />
                         Call 108 (Ambulance)
                       </a>
                       <a
                         href="tel:112"
-                        className="flex-1 inline-flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-destructive text-destructive-foreground font-bold text-xs shadow-sm hover:opacity-90 transition-opacity"
+                        className="flex-1 inline-flex items-center justify-center gap-2 min-h-[44px] py-2.5 px-4 rounded-lg bg-destructive text-destructive-foreground font-bold text-xs shadow-sm hover:opacity-90 transition-opacity"
                       >
                         <PhoneCall className="w-3.5 h-3.5" />
                         Call 112 (National ER)
@@ -533,22 +533,22 @@ export default function LoginPage() {
 
                   <div className="space-y-3 pt-2">
                     <div className="space-y-1">
-                      <Label className="text-xs">Patient Name (Required)</Label>
+                      <Label className="text-xs font-medium">Patient Name (Required)</Label>
                       <Input
                         placeholder="e.g. Anbarasan or Family Member"
                         value={guestName}
                         onChange={(e) => setGuestName(e.target.value)}
                         required
-                        className="h-9"
+                        className="h-11 min-h-[44px]"
                       />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-xs">Age (Optional)</Label>
+                      <Label className="text-xs font-medium">Age (Optional)</Label>
                       <Input
                         placeholder="e.g. 55"
                         value={guestAge}
                         onChange={(e) => setGuestAge(e.target.value)}
-                        className="h-9"
+                        className="h-11 min-h-[44px]"
                       />
                     </div>
                   </div>
@@ -558,7 +558,7 @@ export default function LoginPage() {
                       type="submit"
                       variant="destructive"
                       disabled={isEmergencyLoading}
-                      className="w-full font-semibold text-xs h-10 gap-2"
+                      className="w-full font-semibold text-sm h-11 min-h-[44px] gap-2"
                     >
                       {isEmergencyLoading ? 'Alerting Hospital Casualty...' : 'Dispatch ER Alert & View Nearest Hospital'}
                     </Button>
@@ -566,7 +566,7 @@ export default function LoginPage() {
                       type="button"
                       variant="ghost"
                       onClick={() => setShowEmergencyModal(false)}
-                      className="w-full text-xs text-muted-foreground h-9"
+                      className="w-full text-sm font-medium text-foreground h-11 min-h-[44px]"
                     >
                       Cancel — Back to Normal Sign In
                     </Button>
@@ -583,7 +583,7 @@ export default function LoginPage() {
                       </div>
                       <div>
                         <p className="text-xs font-semibold text-destructive">Medical Emergency?</p>
-                        <p className="text-[11px] text-muted-foreground">Skip OTP to trigger hospital ER assistance.</p>
+                        <p className="text-xs text-foreground/80 font-medium">Skip OTP to trigger hospital ER assistance.</p>
                       </div>
                     </div>
                     <Button
@@ -591,7 +591,7 @@ export default function LoginPage() {
                       variant="destructive"
                       size="sm"
                       onClick={() => setShowEmergencyModal(true)}
-                      className="text-xs font-bold shrink-0 h-8 gap-1.5"
+                      className="text-xs font-bold shrink-0 min-h-[44px] px-3.5 gap-1.5"
                     >
                       <PhoneCall className="w-3.5 h-3.5" />
                       Call 108
@@ -636,7 +636,7 @@ export default function LoginPage() {
                           setOtpSent(false);
                           setErrorMessage('');
                         }}
-                        className="text-xs text-primary hover:underline"
+                        className="text-xs text-primary hover:underline min-h-[44px] inline-flex items-center px-1"
                       >
                         Change number
                       </button>
@@ -648,7 +648,7 @@ export default function LoginPage() {
                       value={otpCode}
                       onChange={(e) => setOtpCode(e.target.value)}
                       required
-                      className="h-12 text-center text-2xl tracking-widest font-mono font-semibold"
+                      className="h-12 min-h-[44px] text-center text-2xl tracking-widest font-mono font-semibold"
                     />
                     <p className="text-xs text-muted-foreground text-center">
                       Code sent to <span className="font-semibold text-foreground">{phone}</span>
@@ -664,7 +664,7 @@ export default function LoginPage() {
                   <Button
                     type="submit"
                     disabled={isLoading || otpCode.length < 6}
-                    className="w-full h-11 rounded-lg font-medium gap-2 text-sm"
+                    className="w-full h-11 min-h-[44px] rounded-lg font-medium gap-2 text-sm"
                   >
                     <Lock className="w-4 h-4" />
                     {isLoading ? 'Verifying Code...' : 'Verify & Continue'}
@@ -677,7 +677,7 @@ export default function LoginPage() {
                       size="sm"
                       disabled={cooldown > 0 || isLoading}
                       onClick={() => handleRequestOtp()}
-                      className="text-xs text-muted-foreground gap-1.5"
+                      className="text-xs text-muted-foreground gap-1.5 min-h-[44px]"
                     >
                       <RefreshCw className="w-3.5 h-3.5" />
                       {cooldown > 0 ? `Resend code in ${cooldown}s` : 'Resend Code'}
@@ -696,7 +696,7 @@ export default function LoginPage() {
               <div className="space-y-2">
                 <Label>Hospital Staff Role</Label>
                 <Select value={staffRole} onValueChange={(val: any) => setStaffRole(val || 'doctor')}>
-                  <SelectTrigger className="h-10">
+                  <SelectTrigger className="h-11 min-h-[44px]">
                     <SelectValue placeholder="Select role" />
                   </SelectTrigger>
                   <SelectContent>
@@ -710,6 +710,7 @@ export default function LoginPage() {
               <div className="space-y-2">
                 <Label>Hospital Email / Clinician ID</Label>
                 <Input
+                  className="h-11 min-h-[44px]"
                   placeholder="doctor.name@hospital.gov.in"
                   value={staffIdentifier}
                   onChange={(e) => setStaffIdentifier(e.target.value)}
@@ -721,6 +722,7 @@ export default function LoginPage() {
                 <Label>Account Password</Label>
                 <Input
                   type="password"
+                  className="h-11 min-h-[44px]"
                   placeholder="Enter secure password"
                   value={staffPassword}
                   onChange={(e) => setStaffPassword(e.target.value)}
@@ -733,20 +735,21 @@ export default function LoginPage() {
                   <div className="space-y-2">
                     <Label>NMC / State Medical Council Registration No.</Label>
                     <Input
+                      className="h-11 min-h-[44px]"
                       placeholder="e.g. TNMC-54321 or NMC-109283"
                       value={regNumber}
                       onChange={(e) => setRegNumber(e.target.value)}
                       required
                     />
-                    <p className="text-[11px] text-muted-foreground">
-                      Required under Telemedicine Practice Guidelines 2020 for lawful digital triage review.
+                    <p className="text-xs text-foreground/80">
+                      Medical Council registration number for credential verification.
                     </p>
                   </div>
 
                   <div className="space-y-2">
                     <Label>Registered Medical Council</Label>
                     <Select value={council} onValueChange={(val) => setCouncil(val || STATE_COUNCILS[0])}>
-                      <SelectTrigger className="h-10">
+                      <SelectTrigger className="h-11 min-h-[44px]">
                         <SelectValue placeholder="Select Council" />
                       </SelectTrigger>
                       <SelectContent>
@@ -762,7 +765,7 @@ export default function LoginPage() {
               <Button
                 type="submit"
                 disabled={isLoading}
-                className="w-full mt-4 h-11 rounded-lg font-medium gap-2"
+                className="w-full mt-4 h-11 min-h-[44px] rounded-lg font-medium gap-2"
               >
                 <Lock className="w-4 h-4" />
                 {isLoading ? 'Verifying Credentials...' : 'Verify & Enter Dashboard'}
@@ -787,9 +790,9 @@ export default function LoginPage() {
         </CardContent>
 
         <CardFooter className="flex flex-col text-center border-t border-border/60 pt-4 pb-4">
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground justify-center">
-            <ShieldCheck className="w-4 h-4 text-emerald-600" />
-            <span>256-bit Encrypted Session • MoHFW Telemedicine Practice Guidelines Aligned</span>
+          <div className="flex items-center gap-1.5 text-xs text-foreground/80 justify-center">
+            <ShieldCheck className="w-4 h-4 text-primary" />
+            <span>256-bit Encrypted Session</span>
           </div>
         </CardFooter>
       </Card>

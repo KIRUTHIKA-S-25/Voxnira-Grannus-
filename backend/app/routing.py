@@ -26,11 +26,18 @@ logger = logging.getLogger("rural_care.routing")
 
 
 DEPARTMENT_CODES = {
-    "EMERGENCY": "Emergency Medicine",
-    "GEN_MED": "General Medicine",
-    "PEDIATRICS": "Pediatrics",
-    "OBGYN": "Obstetrics & Gynecology",
-    "CARDIOLOGY": "Cardiology",
+    "EMERGENCY": "Emergency Medicine & Trauma",
+    "CARDIOLOGY": "Cardiology & Vascular Medicine",
+    "PEDIATRICS": "Pediatrics & Neonatology",
+    "OBGYN": "Obstetrics & Gynecology (Maternal Care)",
+    "ORTHOPEDICS": "Orthopaedics & Joint Surgery",
+    "PULMONOLOGY": "Pulmonology & Respiratory Medicine",
+    "NEUROLOGY": "Neurology & Acute Stroke Unit",
+    "GASTROENTEROLOGY": "Gastroenterology & Hepatology",
+    "DERMATOLOGY": "Dermatology & Cutaneous Medicine",
+    "ENT": "ENT (Otorhinolaryngology)",
+    "OPHTHALMOLOGY": "Ophthalmology (Eye Care)",
+    "GEN_MED": "General Medicine & NCDs",
 }
 
 
@@ -67,7 +74,7 @@ def categorize_complaint(
                 if not s_neg:
                     symptoms_text += " " + s_name
 
-    # 1. Emergency Red Flags
+    # 1. Emergency Red Flags (B5.3 Rule 1)
     if urgency_tier == "emergency":
         return (
             "acute_emergency",
@@ -75,17 +82,12 @@ def categorize_complaint(
             "Routed by complaint category: acute emergency / critical red flag requiring immediate ER evaluation.",
         )
 
-    # 2. Obstetrics & Gynecology (pregnancy, vaginal bleeding, labor)
-    obgyn_keywords = ["pregnant", "pregnancy", "trimester", "vaginal bleed", "labor pain", "cramping pregnancy", "postpartum"]
-    if any(kw in symptoms_text for kw in obgyn_keywords):
-        return (
-            "obstetric_gynecological",
-            "OBGYN",
-            "Routed by complaint category: obstetric/gynecological symptoms routed to Obstetrics & Gynecology.",
-        )
-
-    # 3. Cardiology (chest pain, cardiac tightness, palpitations)
-    cardio_keywords = ["chest pain", "angina", "chest pressure", "palpitations", "heart racing", "chest tightness"]
+    # 2. Cardiology (chest pain, cardiac tightness, palpitations, radiating pain)
+    cardio_keywords = [
+        "chest pain", "angina", "chest pressure", "palpitations", "heart racing",
+        "chest tightness", "radiating to arm", "radiating to jaw", "heart attack",
+        "cardiac", "hypertension crisis", "irregular pulse", "irregular heartbeat"
+    ]
     if any(kw in symptoms_text for kw in cardio_keywords):
         return (
             "cardiac_symptoms",
@@ -93,16 +95,119 @@ def categorize_complaint(
             "Routed by complaint category: cardiac-related chest symptoms routed to Cardiology department.",
         )
 
-    # 4. Pediatrics (child under 12, infant)
-    pediatric_keywords = ["child", "baby", "infant", "toddler", "pediatric"]
-    if (age is not None and age < 12) or any(kw in symptoms_text for kw in pediatric_keywords):
+    # 3. Neurology (stroke FAST signs, seizures, convulsions, acute paralysis)
+    neuro_keywords = [
+        "stroke", "slurred speech", "facial droop", "one-sided weakness", "paralysis",
+        "hemiparesis", "seizure", "convulsion", "fits", "epilepsy", "thunderclap headache",
+        "loss of balance", "numbness in face", "ataxia", "tremor"
+    ]
+    if any(kw in symptoms_text for kw in neuro_keywords):
+        return (
+            "neurological_symptoms",
+            "NEUROLOGY",
+            "Routed by complaint category: focal neurological signs or seizure presentation routed to Neurology.",
+        )
+
+    # 4. Obstetrics & Gynecology (pregnancy, vaginal bleeding, labor, antenatal care)
+    obgyn_keywords = [
+        "pregnant", "pregnancy", "trimester", "vaginal bleed", "labor pain",
+        "cramping pregnancy", "postpartum", "amniotic", "morning sickness", "amenorrhea",
+        "missed period", "pelvic pain", "uterine", "breast lump", "breast pain", "mastitis"
+    ]
+    if any(kw in symptoms_text for kw in obgyn_keywords):
+        return (
+            "obstetric_gynecological",
+            "OBGYN",
+            "Routed by complaint category: obstetric/gynecological symptoms routed to Obstetrics & Gynecology.",
+        )
+
+    # 5. Pediatrics (child under 14, infant, newborn)
+    pediatric_keywords = ["child", "baby", "infant", "toddler", "pediatric", "paediatric", "newborn", "teething"]
+    if (age is not None and age <= 14) or any(kw in symptoms_text for kw in pediatric_keywords):
         return (
             "pediatric_illness",
             "PEDIATRICS",
-            f"Routed by complaint category: pediatric presentation (age {age or '<12'}) routed to Pediatrics department.",
+            f"Routed by complaint category: pediatric presentation (age {age or '<=14'}) routed to Pediatrics department.",
         )
 
-    # 5. Default: General Medicine
+    # 6. Orthopaedics (fractures, bone injury, joint dislocation, severe back/joint pain)
+    ortho_keywords = [
+        "fracture", "broken bone", "bone crack", "joint pain", "knee pain", "back pain",
+        "hip pain", "shoulder pain", "sprain", "dislocation", "swollen joint", "cannot walk",
+        "inability to bear weight", "twisted ankle", "ligament", "arthritis", "slip disc", "sciatica"
+    ]
+    if any(kw in symptoms_text for kw in ortho_keywords):
+        return (
+            "orthopedic_musculoskeletal",
+            "ORTHOPEDICS",
+            "Routed by complaint category: bone, joint, or musculoskeletal trauma routed to Orthopaedics department.",
+        )
+
+    # 7. Pulmonology (chronic cough, wheezing, asthma, hemoptysis, breathlessness)
+    pulm_keywords = [
+        "chronic cough", "wheezing", "asthma", "stridor", "coughing blood", "hemoptysis",
+        "phlegm", "sputum", "bronchitis", "copd", "tuberculosis", "chest congestion", "persistent cough"
+    ]
+    if any(kw in symptoms_text for kw in pulm_keywords):
+        return (
+            "respiratory_pulmonary",
+            "PULMONOLOGY",
+            "Routed by complaint category: lower respiratory symptoms or chronic cough routed to Pulmonology department.",
+        )
+
+    # 8. Gastroenterology & Hepatology (abdominal pain, vomiting blood, black stools, jaundice)
+    gastro_keywords = [
+        "stomach pain", "abdominal pain", "belly pain", "stomach ache", "vomiting blood",
+        "hematemesis", "blood in stool", "black stool", "melena", "jaundice", "yellow eyes",
+        "yellow skin", "gastritis", "acidity", "heartburn", "gerd", "severe vomiting",
+        "loose motions", "diarrhea", "diarrhoea", "constipation", "bloating"
+    ]
+    if any(kw in symptoms_text for kw in gastro_keywords):
+        return (
+            "gastrointestinal_hepatic",
+            "GASTROENTEROLOGY",
+            "Routed by complaint category: abdominal or gastrointestinal presentation routed to Gastroenterology department.",
+        )
+
+    # 9. Dermatology (rashes, boils, severe itching, skin lesions, fungal infection)
+    derma_keywords = [
+        "skin rash", "itching", "pruritus", "boil", "skin lesion", "urticaria", "hives",
+        "eczema", "fungal infection", "ringworm", "tinea", "scabies", "cellulitis",
+        "skin peeling", "allergy on skin", "dermatitis", "psoriasis", "blisters"
+    ]
+    if any(kw in symptoms_text for kw in derma_keywords):
+        return (
+            "dermatological_cutaneous",
+            "DERMATOLOGY",
+            "Routed by complaint category: cutaneous or dermatological symptoms routed to Dermatology department.",
+        )
+
+    # 10. ENT (ear discharge, throat pain, difficulty swallowing, nosebleed, sinusitis)
+    ent_keywords = [
+        "ear pain", "ear ache", "ear discharge", "pus in ear", "hearing loss", "throat pain",
+        "sore throat", "difficulty swallowing", "tonsil", "nosebleed", "epistaxis", "sinus",
+        "sinusitis", "blocked nose", "hoarseness", "loss of voice", "tinnitus", "ringing in ear"
+    ]
+    if any(kw in symptoms_text for kw in ent_keywords):
+        return (
+            "ent_otorhinolaryngology",
+            "ENT",
+            "Routed by complaint category: ear, nose, or throat symptoms routed to ENT department.",
+        )
+
+    # 11. Ophthalmology (eye pain, vision loss, red eye, foreign body in eye)
+    eye_keywords = [
+        "eye pain", "vision loss", "blurred vision", "red eye", "eye redness", "eye discharge",
+        "foreign body in eye", "chemical in eye", "conjunctivitis", "double vision", "swollen eye", "corneal"
+    ]
+    if any(kw in symptoms_text for kw in eye_keywords):
+        return (
+            "ophthalmic_vision",
+            "OPHTHALMOLOGY",
+            "Routed by complaint category: eye symptoms or visual disturbance routed to Ophthalmology department.",
+        )
+
+    # 12. Default: General Medicine
     return (
         "general_medical",
         "GEN_MED",
@@ -213,11 +318,25 @@ def _matches_specialty(specialty: str, dept_code: str) -> bool:
         return True
     if dept_code == "PEDIATRICS" and ("pediatric" in s or "paediatric" in s):
         return True
-    if dept_code == "OBGYN" and ("ob" in s or "gyn" in s or "obstetric" in s):
+    if dept_code == "OBGYN" and ("ob" in s or "gyn" in s or "obstetric" in s or "maternal" in s):
         return True
-    if dept_code == "EMERGENCY" and ("emergency" in s or "acute" in s or "duty" in s):
+    if dept_code == "EMERGENCY" and ("emergency" in s or "acute" in s or "duty" in s or "trauma" in s):
         return True
-    if dept_code == "GEN_MED" and ("general" in s or "medicine" in s or "derma" in s or "ortho" in s or "ent" in s):
+    if dept_code == "ORTHOPEDICS" and ("ortho" in s or "joint" in s or "fracture" in s):
+        return True
+    if dept_code == "PULMONOLOGY" and ("pulmo" in s or "chest" in s or "respirat" in s):
+        return True
+    if dept_code == "NEUROLOGY" and ("neuro" in s or "stroke" in s):
+        return True
+    if dept_code == "GASTROENTEROLOGY" and ("gastro" in s or "digest" in s or "hepat" in s):
+        return True
+    if dept_code == "DERMATOLOGY" and ("derma" in s or "skin" in s or "cutan" in s):
+        return True
+    if dept_code == "ENT" and ("ent" in s or "oto" in s or "rhino" in s):
+        return True
+    if dept_code == "OPHTHALMOLOGY" and ("ophthalm" in s or "eye" in s or "vision" in s):
+        return True
+    if dept_code == "GEN_MED" and ("general" in s or "medicine" in s or "physician" in s or "internal" in s or "family" in s):
         return True
     return False
 

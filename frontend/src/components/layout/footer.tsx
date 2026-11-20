@@ -8,7 +8,7 @@ export function Footer() {
           <span className="font-heading text-lg font-medium text-foreground">Grannus — RuralCare AI</span>
           <span className="text-sm text-muted-foreground">Bridging the healthcare & language gap</span>
         </div>
-        <div className="text-xs text-muted-foreground/70 max-w-md text-center md:text-right">
+        <div className="text-xs text-foreground/80 max-w-md text-center md:text-right">
           Disclaimer: This system uses AI for preliminary symptom assessment and translation. It does not replace professional medical advice. Always consult a qualified healthcare provider.
         </div>
       </div>

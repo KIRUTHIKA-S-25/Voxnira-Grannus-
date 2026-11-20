@@ -215,21 +215,29 @@ export const SUPPORTED_LANGUAGES = [
   { code: 'en-IN', name: 'English', nativeName: 'English' }
 ];
 
+let _inMemoryAuthToken: string | null = null;
+
 export function getAuthToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('grannus_auth_token');
+  return _inMemoryAuthToken;
 }
 
 export function setAuthToken(token: string): void {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem('grannus_auth_token', token);
-  window.dispatchEvent(new Event('grannus_auth_change'));
+  _inMemoryAuthToken = token;
+  // Security Fix (A4): Do NOT persist raw JWTs in localStorage to protect against XSS exfiltration.
+  // The backend sets an httpOnly, SameSite=Lax cookie which is automatically transmitted with credentials: 'include'.
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('grannus_auth_token');
+    window.dispatchEvent(new Event('grannus_auth_change'));
+  }
 }
 
 export function removeAuthToken(): void {
-  if (typeof window === 'undefined') return;
-  localStorage.removeItem('grannus_auth_token');
-  window.dispatchEvent(new Event('grannus_auth_change'));
+  _inMemoryAuthToken = null;
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('grannus_auth_token');
+    localStorage.removeItem('grannus_user');
+    window.dispatchEvent(new Event('grannus_auth_change'));
+  }
 }
 
 export function getAuthHeaders(): Record<string, string> {
@@ -709,6 +717,53 @@ export async function guestEmergencyIntake(params: {
   return data;
 }
 
+export interface SOSDispatchPayload {
+  latitude?: number;
+  longitude?: number;
+  accuracy?: number;
+  patient_name?: string;
+  patient_phone?: string;
+  contact_phone?: string;
+  emergency_type?: string;
+  notes?: string;
+}
+
+export interface SOSDispatchResponse {
+  success: boolean;
+  dispatch_id: string;
+  status: string;
+  ambulance_number: string;
+  emergency_number: string;
+  location_recorded: boolean;
+  map_url?: string | null;
+  contact_notified: boolean;
+  message: string;
+  timestamp: string;
+}
+
+/**
+ * Dispatch an Emergency SOS alert with GPS coordinates to hospital dispatch & SMS contact (E2).
+ */
+export async function triggerEmergencySOS(params: SOSDispatchPayload): Promise<SOSDispatchResponse> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const res = await fetch(`${baseUrl}/api/v1/emergency/sos`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    credentials: 'include',
+    body: JSON.stringify(params),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Emergency SOS dispatch request failed.');
+  }
+
+  return await res.json();
+}
+
 /**
  * Staff login with email and password (doctors, nurses, admins).
  */
@@ -717,6 +772,7 @@ export async function loginStaff(payload: Record<string, any>): Promise<LoginRes
   const res = await fetch(`${baseUrl}/api/v1/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify(payload),
   });
 
@@ -742,6 +798,7 @@ export async function logoutUser(): Promise<void> {
     await fetch(`${baseUrl}/api/v1/auth/logout`, {
       method: 'POST',
       headers: getAuthHeaders(),
+      credentials: 'include',
     });
   } catch {
     // Graceful offline logout

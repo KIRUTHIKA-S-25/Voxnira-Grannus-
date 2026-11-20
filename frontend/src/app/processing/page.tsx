@@ -7,63 +7,60 @@ import { ProcessingZen } from '@/components/pipeline/processing-zen';
 import { Button } from '@/components/ui/button';
 import { AlertCircle } from 'lucide-react';
 import { audioDataToBlob } from '@/lib/utils';
+import { getPipelinePayload, setPipelinePayload, clearPipelinePayload, PipelinePayload } from '@/lib/pipeline-store';
 
 export default function ProcessingPage() {
   const router = useRouter();
   const { processAudio, isProcessing, currentStage, stageProgress, consultationId, error, reset } = usePipeline();
   const hasStartedRef = useRef(false);
-  const cachedPayloadRef = useRef<any>(null);
+  const cachedPayloadRef = useRef<PipelinePayload | null>(null);
 
   useEffect(() => {
     // Prevent duplicate execution from React StrictMode or re-renders
     if (hasStartedRef.current) return;
     
-    const payloadStr = sessionStorage.getItem('grannus_pipeline_payload');
-    if (!payloadStr) {
+    const payload = getPipelinePayload();
+    if (!payload || !payload.audio) {
       if (!hasStartedRef.current && !consultationId && !isProcessing) {
         router.push('/input');
       }
       return;
     }
 
-    // Set synchronous flag and consume payload immediately to guarantee single execution
+    // Set synchronous flag immediately to guarantee single execution
     hasStartedRef.current = true;
-    sessionStorage.removeItem('grannus_pipeline_payload');
+    cachedPayloadRef.current = payload;
 
-    try {
-      const payload = JSON.parse(payloadStr);
-      cachedPayloadRef.current = payload;
-
-      // Convert base64 back to Blob safely without network fetch
-      audioDataToBlob(payload.audio)
-        .then(blob => {
-          processAudio({
-            audio: blob,
-            language_code: payload.language_code === 'unknown' ? undefined : payload.language_code,
-            doctor_preferred_language: payload.doctor_preferred_language,
-            age: payload.age,
-            gender: payload.gender,
-            reported_duration: payload.reported_duration,
-            known_conditions: payload.known_conditions,
-            current_medications: payload.current_medications,
-            profile_id: payload.profile_id,
-            patient_name: payload.patient_name,
-            latitude: payload.latitude,
-            longitude: payload.longitude,
-          });
-        })
-        .catch(fetchErr => {
-          console.error("Audio blob conversion failed:", fetchErr);
-          router.push('/input');
+    // Convert audio to Blob safely without network fetch
+    audioDataToBlob(payload.audio)
+      .then(blob => {
+        if (!blob || blob.size === 0) {
+          console.warn("Audio blob is empty or could not be decoded");
+        }
+        processAudio({
+          audio: blob,
+          language_code: payload.language_code === 'unknown' ? undefined : payload.language_code,
+          doctor_preferred_language: payload.doctor_preferred_language,
+          age: payload.age,
+          gender: payload.gender,
+          reported_duration: payload.reported_duration,
+          known_conditions: payload.known_conditions,
+          current_medications: payload.current_medications,
+          profile_id: payload.profile_id,
+          patient_name: payload.patient_name,
+          latitude: payload.latitude,
+          longitude: payload.longitude,
         });
-    } catch (err) {
-      console.error(err);
-      router.push('/input');
-    }
+      })
+      .catch(err => {
+        console.error("Audio conversion failed:", err);
+        router.push('/input');
+      });
   }, [router, processAudio, consultationId, isProcessing]);
 
   useEffect(() => {
     if (consultationId && !isProcessing) {
+      clearPipelinePayload();
       // Small delay to show completion before navigation
       const timer = setTimeout(() => {
         router.push(`/results?id=${consultationId}`);
@@ -82,7 +79,7 @@ export default function ProcessingPage() {
     reset();
     hasStartedRef.current = false;
     if (cachedPayloadRef.current) {
-      sessionStorage.setItem('grannus_pipeline_payload', JSON.stringify(cachedPayloadRef.current));
+      setPipelinePayload(cachedPayloadRef.current);
       window.location.reload();
     } else {
       router.push('/input');

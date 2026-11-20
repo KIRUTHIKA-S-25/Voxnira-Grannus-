@@ -57,19 +57,34 @@ def get_supabase_client():
 _MEM_HOSPITALS = [
     {
         "id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f",
-        "name": "District Hospital Rural Outreach",
-        "code": "DHRO-01",
-        "location": "Tamil Nadu, India",
+        "name": "Government District Headquarters Hospital & Telemedicine Hub",
+        "code": "GDHH-TN-401",
+        "abdm_facility_id": "IN3310004928",
+        "facility_type": "District Headquarters Hospital (Tertiary Referral Center)",
+        "location": "Main Hospital Road, Kallakurichi District, Tamil Nadu 606202",
         "emergency_phone": "108",
+        "national_emergency": "112",
+        "casualty_phone": "+91 4151 222108",
+        "opd_timings": "Mon–Sat 08:00 AM – 04:00 PM (24x7 Casualty & Trauma Resuscitation)",
+        "telemedicine_node_id": "TELE-TN-D01",
+        "medical_superintendent": "Dr. K. S. Rajasekharan, MS, MCh",
+        "network": "National Health Mission (NHM) • ABDM Unified Health Interface",
     }
 ]
 
 _MEM_DEPARTMENTS = [
-    {"id": "d1", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "Emergency Medicine", "code": "EMERGENCY"},
-    {"id": "d2", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "General Medicine", "code": "GEN_MED"},
-    {"id": "d3", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "Pediatrics", "code": "PEDIATRICS"},
-    {"id": "d4", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "Obstetrics & Gynecology", "code": "OBGYN"},
-    {"id": "d5", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "Cardiology", "code": "CARDIOLOGY"},
+    {"id": "d1", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "Emergency Medicine & Trauma", "code": "EMERGENCY"},
+    {"id": "d2", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "General Medicine & NCDs", "code": "GEN_MED"},
+    {"id": "d3", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "Pediatrics & Neonatology", "code": "PEDIATRICS"},
+    {"id": "d4", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "Obstetrics & Gynecology (Maternal Care)", "code": "OBGYN"},
+    {"id": "d5", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "Cardiology & Vascular Medicine", "code": "CARDIOLOGY"},
+    {"id": "d6", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "Orthopaedics & Joint Surgery", "code": "ORTHOPEDICS"},
+    {"id": "d7", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "Pulmonology & Respiratory Medicine", "code": "PULMONOLOGY"},
+    {"id": "d8", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "Neurology & Acute Stroke Unit", "code": "NEUROLOGY"},
+    {"id": "d9", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "Gastroenterology & Hepatology", "code": "GASTROENTEROLOGY"},
+    {"id": "d10", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "Dermatology & Cutaneous Medicine", "code": "DERMATOLOGY"},
+    {"id": "d11", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "ENT (Otorhinolaryngology)", "code": "ENT"},
+    {"id": "d12", "hospital_id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f", "name": "Ophthalmology (Eye Care)", "code": "OPHTHALMOLOGY"},
 ]
 
 _MEM_ACCOUNTS: Dict[str, dict] = {}
@@ -463,10 +478,13 @@ _FALLBACK_STAFF = {
         "password_hash": hash_password("grannus_secure_doctor_2026"),
         "role": "doctor",
         "full_name": "Dr. Rajan K., MD",
+        "qualifications": "MBBS, MD (General Medicine)",
         "doctor_registration_number": "TNMC-48291",
         "state_council": "Tamil Nadu Medical Council",
         "specialty": "General Medicine",
         "department_code": "GEN_MED",
+        "opd_room": "Room 101, Ground Floor OPD Block",
+        "experience": "16 Years Clinical Practice",
         "languages": ["ta", "en", "hi"],
         "is_active": True,
         "is_on_duty": True,
@@ -481,10 +499,13 @@ _FALLBACK_STAFF = {
         "password_hash": hash_password("grannus_priya_dm_2026!"),
         "role": "doctor",
         "full_name": "Dr. Priya Sundaram, DM",
+        "qualifications": "MBBS, MD, DM (Cardiology), FACC",
         "doctor_registration_number": "TNMC-54321",
         "state_council": "Tamil Nadu Medical Council",
         "specialty": "Cardiology",
         "department_code": "CARDIOLOGY",
+        "opd_room": "Room 201, 2nd Floor Cardiology Wing",
+        "experience": "13 Years Clinical Practice",
         "languages": ["ta", "en"],
         "is_active": True,
         "is_on_duty": True,
@@ -499,10 +520,13 @@ _FALLBACK_STAFF = {
         "password_hash": hash_password("grannus_vikram_peds_2026!"),
         "role": "doctor",
         "full_name": "Dr. Vikram Patel, MD",
+        "qualifications": "MBBS, MD (Pediatrics), DNB",
         "doctor_registration_number": "GMC-39104",
         "state_council": "Gujarat Medical Council",
         "specialty": "Pediatrics",
         "department_code": "PEDIATRICS",
+        "opd_room": "Room 105, Child Health & Immunization Clinic",
+        "experience": "11 Years Clinical Practice",
         "languages": ["hi", "en", "te"],
         "is_active": True,
         "is_on_duty": True,
@@ -517,10 +541,13 @@ _FALLBACK_STAFF = {
         "password_hash": hash_password("grannus_shalini_derm_2026!"),
         "role": "doctor",
         "full_name": "Dr. Shalini Reddy, MD",
+        "qualifications": "MBBS, MD (DVL - Dermatology)",
         "doctor_registration_number": "APMC-28491",
         "state_council": "Andhra Pradesh Medical Council",
         "specialty": "Dermatology",
-        "department_code": "GEN_MED",
+        "department_code": "DERMATOLOGY",
+        "opd_room": "Room 115, Cutaneous & Skin Care Clinic",
+        "experience": "10 Years Clinical Practice",
         "languages": ["te", "en"],
         "is_active": True,
         "is_on_duty": True,
@@ -535,10 +562,13 @@ _FALLBACK_STAFF = {
         "password_hash": hash_password("grannus_meenakshi_obgyn_2026!"),
         "role": "doctor",
         "full_name": "Dr. Meenakshi Iyer, MS",
+        "qualifications": "MBBS, MS (Obstetrics & Gynecology), DGO",
         "doctor_registration_number": "TNMC-61245",
         "state_council": "Tamil Nadu Medical Council",
         "specialty": "Obstetrics & Gynecology",
         "department_code": "OBGYN",
+        "opd_room": "Room 108, Maternal & Antenatal Care Block",
+        "experience": "15 Years Clinical Practice",
         "languages": ["ta", "en"],
         "is_active": True,
         "is_on_duty": True,
@@ -553,10 +583,13 @@ _FALLBACK_STAFF = {
         "password_hash": hash_password("grannus_arvind_ortho_2026!"),
         "role": "doctor",
         "full_name": "Dr. Arvind Kumar, MS",
+        "qualifications": "MBBS, MS (Orthopaedics), MCh",
         "doctor_registration_number": "DMC-50123",
         "state_council": "Delhi Medical Council",
         "specialty": "Orthopaedics",
-        "department_code": "GEN_MED",
+        "department_code": "ORTHOPEDICS",
+        "opd_room": "Room 112, Orthopaedic Trauma & Fracture Clinic",
+        "experience": "12 Years Clinical Practice",
         "languages": ["hi", "ta", "en"],
         "is_active": True,
         "is_on_duty": True,
@@ -571,10 +604,13 @@ _FALLBACK_STAFF = {
         "password_hash": hash_password("grannus_suresh_ent_2026!"),
         "role": "doctor",
         "full_name": "Dr. Suresh Varma, MS",
+        "qualifications": "MBBS, MS (ENT - Otorhinolaryngology)",
         "doctor_registration_number": "TSMC-33109",
         "state_council": "Telangana State Medical Council",
         "specialty": "ENT",
-        "department_code": "GEN_MED",
+        "department_code": "ENT",
+        "opd_room": "Room 118, ENT & Audiology Suite",
+        "experience": "14 Years Clinical Practice",
         "languages": ["te", "ta", "en"],
         "is_active": True,
         "is_on_duty": True,
@@ -583,16 +619,103 @@ _FALLBACK_STAFF = {
         "weekly_schedule": {"mon_fri": "09:00-17:00"},
         "is_verified_doctor": True,
     },
+    "dr.ananya@hospital.in": {
+        "id": "11111111-0009-0000-0000-000000000009",
+        "email": "dr.ananya@hospital.in",
+        "password_hash": hash_password("grannus_ananya_pulm_2026!"),
+        "role": "doctor",
+        "full_name": "Dr. Ananya Mukherjee, MD, DM",
+        "qualifications": "MBBS, MD (Respiratory Medicine), DM",
+        "doctor_registration_number": "WBMC-58210",
+        "state_council": "West Bengal Medical Council",
+        "specialty": "Pulmonology",
+        "department_code": "PULMONOLOGY",
+        "opd_room": "Room 204, Chest Clinic & Pulmonary Lab",
+        "experience": "12 Years Clinical Practice",
+        "languages": ["hi", "en", "ta"],
+        "is_active": True,
+        "is_on_duty": True,
+        "active_case_load": 0,
+        "max_capacity": 15,
+        "weekly_schedule": {"mon_fri": "09:00-17:00"},
+        "is_verified_doctor": True,
+    },
+    "dr.karthik@hospital.in": {
+        "id": "11111111-0010-0000-0000-000000000010",
+        "email": "dr.karthik@hospital.in",
+        "password_hash": hash_password("grannus_karthik_neuro_2026!"),
+        "role": "doctor",
+        "full_name": "Dr. Karthik Narayanan, MD, DM",
+        "qualifications": "MBBS, MD, DM (Neurology)",
+        "doctor_registration_number": "TNMC-79401",
+        "state_council": "Tamil Nadu Medical Council",
+        "specialty": "Neurology",
+        "department_code": "NEUROLOGY",
+        "opd_room": "Room 208, Stroke & Neurological Care Unit",
+        "experience": "15 Years Clinical Practice",
+        "languages": ["ta", "en", "te"],
+        "is_active": True,
+        "is_on_duty": True,
+        "active_case_load": 0,
+        "max_capacity": 12,
+        "weekly_schedule": {"mon_fri": "09:00-17:00"},
+        "is_verified_doctor": True,
+    },
+    "dr.deepa@hospital.in": {
+        "id": "11111111-0011-0000-0000-000000000011",
+        "email": "dr.deepa@hospital.in",
+        "password_hash": hash_password("grannus_deepa_gastro_2026!"),
+        "role": "doctor",
+        "full_name": "Dr. Deepa Shenoy, MD, DM",
+        "qualifications": "MBBS, MD, DM (Medical Gastroenterology)",
+        "doctor_registration_number": "KMC-46190",
+        "state_council": "Karnataka Medical Council",
+        "specialty": "Gastroenterology",
+        "department_code": "GASTROENTEROLOGY",
+        "opd_room": "Room 210, Digestive Diseases OPD",
+        "experience": "13 Years Clinical Practice",
+        "languages": ["en", "hi", "ta"],
+        "is_active": True,
+        "is_on_duty": True,
+        "active_case_load": 0,
+        "max_capacity": 15,
+        "weekly_schedule": {"mon_fri": "09:30-17:30"},
+        "is_verified_doctor": True,
+    },
+    "dr.senthil@hospital.in": {
+        "id": "11111111-0012-0000-0000-000000000012",
+        "email": "dr.senthil@hospital.in",
+        "password_hash": hash_password("grannus_senthil_eye_2026!"),
+        "role": "doctor",
+        "full_name": "Dr. Senthil Nathan, MS, DO",
+        "qualifications": "MBBS, MS (Ophthalmology), DO",
+        "doctor_registration_number": "TNMC-65912",
+        "state_council": "Tamil Nadu Medical Council",
+        "specialty": "Ophthalmology",
+        "department_code": "OPHTHALMOLOGY",
+        "opd_room": "Room 120, Eye Care OPD & Refraction Unit",
+        "experience": "17 Years Clinical Practice",
+        "languages": ["ta", "en"],
+        "is_active": True,
+        "is_on_duty": True,
+        "active_case_load": 0,
+        "max_capacity": 20,
+        "weekly_schedule": {"mon_sat": "08:30-15:30"},
+        "is_verified_doctor": True,
+    },
     "dr.harish@hospital.in": {
         "id": "11111111-0008-0000-0000-000000000008",
         "email": "dr.harish@hospital.in",
         "password_hash": hash_password("grannus_harish_er_2026!"),
         "role": "doctor",
-        "full_name": "Dr. Harish Naidu, MBBS",
+        "full_name": "Dr. Harish Naidu, MBBS, MEM",
+        "qualifications": "MBBS, MEM (Emergency Medicine), ACLS Certified",
         "doctor_registration_number": "TNMC-72019",
         "state_council": "Tamil Nadu Medical Council",
         "specialty": "Emergency & Acute Care",
         "department_code": "EMERGENCY",
+        "opd_room": "Resuscitation Bay 1, Casualty Emergency Block",
+        "experience": "9 Years Emergency & Trauma Practice",
         "languages": ["ta", "hi", "te", "en"],
         "is_active": True,
         "is_on_duty": True,
@@ -661,9 +784,13 @@ def find_staff_user(email: str) -> Optional[dict]:
         except Exception:
             pass
 
-    for user_key, user in _FALLBACK_STAFF.items():
-        if user["email"].lower() == email_clean or user_key.lower() == email_clean:
-            return user
+    # In production, fallback in-memory registry is strictly forbidden (A2)
+    from app.config import get_settings
+    settings = get_settings()
+    if settings.env in ("development", "test"):
+        for user_key, user in _FALLBACK_STAFF.items():
+            if user["email"].lower() == email_clean or user_key.lower() == email_clean:
+                return user
     return None
 
 
@@ -717,18 +844,67 @@ def create_staff_user(
 _STAFF_FAILED_ATTEMPTS: Dict[str, Tuple[int, float]] = {}
 
 
+def _get_staff_lockout(email_clean: str) -> Tuple[int, float]:
+    """Retrieve failed attempts and lockout expiration from DB or fast in-memory cache (C1)."""
+    client = get_supabase_client()
+    if client:
+        try:
+            res = client.table("staff_lockouts").select("failed_count, lockout_until").eq("email", email_clean).execute()
+            if res.data:
+                row = res.data[0]
+                lockout_until = row.get("lockout_until")
+                lockout_dt = datetime.fromisoformat(lockout_until).timestamp() if lockout_until else 0.0
+                return int(row.get("failed_count", 0)), lockout_dt
+        except Exception:
+            pass
+    return _STAFF_FAILED_ATTEMPTS.get(email_clean, (0, 0.0))
+
+
+def _record_staff_failed_attempt(email_clean: str, count: int, lockout_until: float):
+    """Persist failed login attempt and lockout to DB and in-memory cache (C1)."""
+    _STAFF_FAILED_ATTEMPTS[email_clean] = (count, lockout_until)
+    client = get_supabase_client()
+    if client:
+        try:
+            lockout_iso = datetime.fromtimestamp(lockout_until, timezone.utc).isoformat() if lockout_until > 0 else None
+            client.table("staff_lockouts").upsert({
+                "email": email_clean,
+                "failed_count": count,
+                "lockout_until": lockout_iso,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }).execute()
+        except Exception:
+            pass
+
+
+def _clear_staff_lockout(email_clean: str):
+    """Clear failed login attempts upon successful login (C1)."""
+    _STAFF_FAILED_ATTEMPTS.pop(email_clean, None)
+    client = get_supabase_client()
+    if client:
+        try:
+            client.table("staff_lockouts").delete().eq("email", email_clean).execute()
+        except Exception:
+            pass
+
+
 def authenticate_staff_user(email: str, password: str) -> Optional[dict]:
     """
     Verify staff login with email and password.
     Enforces lockout policy: 5 consecutive failed attempts locks account for 15 minutes.
+    In production, fallback in-memory registry is strictly forbidden (A2).
     """
     email_clean = email.strip().lower()
     now = time.time()
 
-    # Lockout check
-    failed_count, lockout_until = _STAFF_FAILED_ATTEMPTS.get(email_clean, (0, 0.0))
+    # Database-backed lockout check (C1)
+    failed_count, lockout_until = _get_staff_lockout(email_clean)
     if failed_count >= 5 and now < lockout_until:
-        logger.warning("Staff login blocked: %s is locked until %s", email_clean, datetime.fromtimestamp(lockout_until, timezone.utc).isoformat())
+        logger.warning(
+            "Staff login blocked: %s is locked until %s",
+            email_clean,
+            datetime.fromtimestamp(lockout_until, timezone.utc).isoformat(),
+        )
         return None
 
     user = None
@@ -743,22 +919,78 @@ def authenticate_staff_user(email: str, password: str) -> Optional[dict]:
         except Exception as exc:
             logger.error("Supabase staff auth error: %s", exc)
 
+    # In-memory fallback is strictly gated to development and test environments (A2).
+    # Production environments MUST have staff accounts registered in database staff_users table.
+    from app.config import get_settings
+    settings = get_settings()
+
     if not user:
-        for user_key, u in _FALLBACK_STAFF.items():
-            if u["email"].lower() == email_clean or user_key.lower() == email_clean:
-                if verify_password(password, u["password_hash"]):
-                    user = u
-                    break
+        if settings.env not in ("development", "test"):
+            logger.warning(
+                "Production staff authentication refused fallback registry for %s. "
+                "Staff must be provisioned in database staff_users table via admin script.",
+                email_clean,
+            )
+        else:
+            for user_key, u in _FALLBACK_STAFF.items():
+                if u["email"].lower() == email_clean or user_key.lower() == email_clean:
+                    if verify_password(password, u["password_hash"]):
+                        user = u
+                        break
 
     if user:
-        _STAFF_FAILED_ATTEMPTS.pop(email_clean, None)
+        _clear_staff_lockout(email_clean)
         return user
 
     new_count = failed_count + 1
     new_lockout = (now + 900.0) if new_count >= 5 else 0.0
-    _STAFF_FAILED_ATTEMPTS[email_clean] = (new_count, new_lockout)
+    _record_staff_failed_attempt(email_clean, new_count, new_lockout)
     logger.warning("Failed staff auth for %s (attempt %d/5)", email_clean, new_count)
     return None
+
+
+# -----------------------------------------------------------------------------
+# Emergency SOS Dispatch Management (E2)
+# -----------------------------------------------------------------------------
+_MEM_SOS_DISPATCHES: List[dict] = []
+
+
+def save_sos_dispatch(data: dict) -> dict:
+    """Save an emergency SOS dispatch record to database or in-memory fallback."""
+    dispatch_id = str(uuid.uuid4())
+    record = {
+        "id": dispatch_id,
+        "patient_name": data.get("patient_name") or "Emergency Patient",
+        "patient_phone": data.get("patient_phone"),
+        "contact_phone": data.get("contact_phone"),
+        "latitude": data.get("latitude"),
+        "longitude": data.get("longitude"),
+        "accuracy": data.get("accuracy"),
+        "emergency_type": data.get("emergency_type") or "SEVERE_MEDICAL_DISTRESS",
+        "status": "DISPATCHED",
+        "notes": data.get("notes"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    client = get_supabase_client()
+    if client:
+        try:
+            client.table("emergency_sos_dispatches").insert(record).execute()
+        except Exception as exc:
+            logger.error("Failed to insert SOS dispatch into Supabase: %s", exc)
+    _MEM_SOS_DISPATCHES.append(record)
+    return record
+
+
+def get_sos_dispatches() -> List[dict]:
+    client = get_supabase_client()
+    if client:
+        try:
+            res = client.table("emergency_sos_dispatches").select("*").order("created_at", desc=True).execute()
+            if res.data:
+                return res.data
+        except Exception as exc:
+            logger.error("Failed to fetch SOS dispatches from Supabase: %s", exc)
+    return list(reversed(_MEM_SOS_DISPATCHES))
 
 
 # -----------------------------------------------------------------------------
@@ -1742,9 +1974,11 @@ def get_staff_doctors(department_code: Optional[str] = None, on_duty_only: bool 
             logger.error("Supabase get_staff_doctors error: %s", exc)
 
     if not docs:
-        docs = [s for s in _FALLBACK_STAFF.values() if s.get("role") == "doctor"]
-        if on_duty_only:
-            docs = [s for s in docs if s.get("is_on_duty", True)]
+        from app.config import get_settings
+        if get_settings().env in ("development", "test"):
+            docs = [s for s in _FALLBACK_STAFF.values() if s.get("role") == "doctor"]
+            if on_duty_only:
+                docs = [s for s in docs if s.get("is_on_duty", True)]
 
     if department_code:
         docs = [d for d in docs if d.get("department_code") == department_code or d.get("specialty", "").upper() == department_code]

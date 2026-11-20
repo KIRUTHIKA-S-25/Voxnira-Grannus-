@@ -20,6 +20,42 @@ import { Button } from '@/components/ui/button';
 import { ArrowLeft, Plus, Pill, AlertCircle } from 'lucide-react';
 import { motion } from 'framer-motion';
 
+function isInternalFeature(reason: string): boolean {
+  if (!reason || typeof reason !== 'string') return true;
+  const trimmed = reason.trim().toLowerCase();
+  const internalBlacklist = [
+    'gender_female',
+    'gender_male',
+    'gender_other',
+    'age_group',
+    'severity_unknown',
+    'duration_days',
+    'symptom_count',
+    'high_risk_symptom_count',
+    'pain_score',
+    'fever_score',
+    'downgraded_low_confidence',
+    'fail_to_review',
+  ];
+  if (internalBlacklist.includes(trimmed)) return true;
+  if (trimmed.startsWith('model:') || trimmed.startsWith('feature:')) return true;
+  // Raw snake_case tokens without spaces (e.g. demographic/internal flags)
+  if (/^[a-z]+_[a-z0-9_]+$/.test(trimmed) && !trimmed.startsWith('symptom_') && !trimmed.startsWith('condition_')) {
+    return true;
+  }
+  return false;
+}
+
+function formatClinicalReason(reason: string): string {
+  if (reason.startsWith('symptom_')) {
+    return `Reported symptom: ${reason.replace('symptom_', '').replace(/_/g, ' ')}`;
+  }
+  if (reason.startsWith('condition_')) {
+    return `Pre-existing condition: ${reason.replace('condition_', '').replace(/_/g, ' ')}`;
+  }
+  return reason;
+}
+
 function ResultsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -108,14 +144,10 @@ function ResultsContent() {
             />
             <div className="mt-3 flex flex-wrap gap-2">
               {priority.reasons
-                .filter(
-                  (r: string) =>
-                    !['age_group', 'severity_unknown', 'duration_days', 'symptom_count', 'high_risk_symptom_count', 'pain_score', 'fever_score'].includes(r) &&
-                    !r.startsWith('Model:')
-                )
+                .filter((r: string) => !isInternalFeature(r))
                 .map((r: string, i: number) => (
                   <span key={i} className="text-sm text-foreground bg-secondary/50 px-3 py-1 rounded-full">
-                    {r}
+                    {formatClinicalReason(r)}
                   </span>
                 ))}
             </div>

@@ -15,9 +15,8 @@ export function useConsultations() {
     setIsLoading(true);
     setError(null);
 
-    // Client-side guard: check token & role before making request
+    // Client-side guard: check session & clinician role before making request
     if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('grannus_auth_token');
       const stored = localStorage.getItem('grannus_user');
       let isClinician = false;
       if (stored) {
@@ -29,7 +28,7 @@ export function useConsultations() {
         }
       }
 
-      if (!token || !isClinician) {
+      if (!stored || !isClinician) {
         setIsUnauthorized(true);
         setConsultations([]);
         setIsLoading(false);

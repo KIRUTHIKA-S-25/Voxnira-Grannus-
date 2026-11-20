@@ -489,6 +489,24 @@ class PipelineResult(BaseModel):
         description="Clinical summary translated into the doctor's preferred language. Null for LOW priority or when doctor language is English.",
     )
 
+    # ---- Doctor, Hospital & Clinical Routing Information ----
+    assigned_doctor: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Assigned specialist doctor details (name, credentials, registration no, specialty, OPD chamber).",
+    )
+    hospital: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Hospital and healthcare facility details (name, ABDM ID, address, emergency contact, OPD hours).",
+    )
+    department: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Assigned clinical department/specialty and routing rationale.",
+    )
+    routing: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Clinical triage routing info (queue estimate, wait time, consultation token).",
+    )
+
     # ---- Internal/debug fields (not part of the doctor-facing contract) ----
     audio_preprocessing: Optional[AudioPreprocessingResult] = Field(
         default=None, description="Audio preprocessing metadata (debug/audit)."
@@ -499,3 +517,31 @@ class PipelineResult(BaseModel):
     acoustic_biomarkers: Optional[AcousticBiomarkerResult] = Field(
         default=None, description="Acoustic biomarker analysis results (cough, wheeze, breathlessness detection)."
     )
+
+
+# ---------------------------------------------------------------------------
+# Emergency SOS Dispatch Schemas (E2)
+# ---------------------------------------------------------------------------
+
+class SOSDispatchPayload(BaseModel):
+    latitude: Optional[float] = Field(default=None, description="GPS Latitude from patient device")
+    longitude: Optional[float] = Field(default=None, description="GPS Longitude from patient device")
+    accuracy: Optional[float] = Field(default=None, description="GPS accuracy in meters")
+    patient_name: Optional[str] = Field(default="Emergency Patient", description="Name of patient triggering distress")
+    patient_phone: Optional[str] = Field(default=None, description="Patient callback phone number")
+    contact_phone: Optional[str] = Field(default=None, description="Emergency contact phone to notify via SMS")
+    emergency_type: Optional[str] = Field(default="SEVERE_MEDICAL_DISTRESS", description="Distress category")
+    notes: Optional[str] = Field(default=None, description="Additional context or notes")
+
+
+class SOSDispatchResponse(BaseModel):
+    success: bool = True
+    dispatch_id: str
+    status: str = "DISPATCHED"
+    ambulance_number: str = "108"
+    emergency_number: str = "112"
+    location_recorded: bool = False
+    map_url: Optional[str] = None
+    contact_notified: bool = False
+    message: str
+    timestamp: str
