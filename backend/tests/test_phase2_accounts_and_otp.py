@@ -191,3 +191,103 @@ def test_consistent_otp_response_prevents_enumeration():
     assert "code" not in data2
     otp_rate_limiter.clients.clear()
 
+
+def test_patient_phone_status_and_pin_registration():
+    """Verify patient phone status check and compulsory 4-digit PIN registration."""
+    new_phone = "+919777888999"
+
+    # 1. New phone has no PIN set
+    status_res = client.get(f"/api/v1/auth/patient/phone-status?phone_number={new_phone}")
+    assert status_res.status_code == 200
+    status_data = status_res.json()
+    assert status_data["exists"] is False
+    assert status_data["has_pin"] is False
+    assert status_data["is_locked"] is False
+
+    # 2. Reject non-4-digit PINs
+    bad_res1 = client.post("/api/v1/auth/patient/set-pin", json={"phone_number": new_phone, "pin": "12"})
+    assert bad_res1.status_code == 400
+    assert "PIN must be exactly 4 numeric digits" in bad_res1.json()["detail"]
+
+    bad_res2 = client.post("/api/v1/auth/patient/set-pin", json={"phone_number": new_phone, "pin": "12345"})
+    assert bad_res2.status_code == 400
+
+    bad_res3 = client.post("/api/v1/auth/patient/set-pin", json={"phone_number": new_phone, "pin": "abcd"})
+    assert bad_res3.status_code == 400
+
+    # 3. Successfully register 4-digit PIN
+    set_res = client.post("/api/v1/auth/patient/set-pin", json={"phone_number": new_phone, "pin": "8520"})
+    assert set_res.status_code == 200
+    auth_data = set_res.json()
+    assert auth_data["role"] == "patient"
+    assert auth_data["phone_number"] == new_phone
+    assert "token" in auth_data
+    assert "grannus_auth_token" in set_res.cookies
+
+    # 4. Status now reflects registered PIN
+    status_res2 = client.get(f"/api/v1/auth/patient/phone-status?phone_number={new_phone}")
+    assert status_res2.status_code == 200
+    assert status_res2.json()["exists"] is True
+    assert status_res2.json()["has_pin"] is True
+
+    # 5. Cannot overwrite PIN through set-pin if already registered
+    dup_res = client.post("/api/v1/auth/patient/set-pin", json={"phone_number": new_phone, "pin": "9999"})
+    assert dup_res.status_code == 400
+    assert "already configured" in dup_res.json()["detail"]
+
+
+def test_patient_pin_verification_and_brute_force_lockout():
+    """Verify returning patient login with PIN and 5-attempt lockout enforcement."""
+    phone = "+919555666777"
+    valid_pin = "3690"
+
+    # Register initial PIN
+    reg_res = client.post("/api/v1/auth/patient/set-pin", json={"phone_number": phone, "pin": valid_pin})
+    assert reg_res.status_code == 200
+
+    # 1. Incorrect PIN attempts decrement attempts remaining
+    for i in range(1, 5):
+        wrong_res = client.post("/api/v1/auth/patient/login", json={"phone_number": phone, "pin": "0000"})
+        assert wrong_res.status_code == 401
+        expected_remaining = 5 - i
+        assert f"{expected_remaining} attempt(s) remaining" in wrong_res.json()["detail"]
+
+    # 2. 5th failed attempt locks the account
+    lock_res = client.post("/api/v1/auth/patient/login", json={"phone_number": phone, "pin": "0000"})
+    assert lock_res.status_code == 401
+    assert "locked for 15 minutes" in lock_res.json()["detail"]
+
+    # 3. Subsequent attempt during lockout is refused even with correct PIN
+    refused_res = client.post("/api/v1/auth/patient/login", json={"phone_number": phone, "pin": valid_pin})
+    assert refused_res.status_code == 401
+    assert "temporarily locked" in refused_res.json()["detail"]
+
+    # 4. Phone status indicates lockout
+    status_res = client.get(f"/api/v1/auth/patient/phone-status?phone_number={phone}")
+    assert status_res.status_code == 200
+    assert status_res.json()["is_locked"] is True
+    assert status_res.json()["remaining_lockout_seconds"] > 0
+
+
+def test_patient_pin_login_successful_and_loads_profile():
+    """Verify successful 4-digit PIN login and access to patient profiles."""
+    phone = "+919444333222"
+    pin = "1357"
+
+    reg_res = client.post("/api/v1/auth/patient/set-pin", json={"phone_number": phone, "pin": pin})
+    assert reg_res.status_code == 200
+
+    login_res = client.post("/api/v1/auth/patient/login", json={"phone_number": phone, "pin": pin})
+    assert login_res.status_code == 200
+    token = login_res.json()["token"]
+    assert "grannus_auth_token" in login_res.cookies
+
+    # Access profiles with issued token
+    headers = {"Authorization": f"Bearer {token}"}
+    prof_res = client.get("/api/v1/patient/profiles", headers=headers)
+    assert prof_res.status_code == 200
+    profiles = prof_res.json()
+    assert len(profiles) >= 1
+    assert profiles[0]["relation"] == "self"
+
+

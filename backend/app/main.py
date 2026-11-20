@@ -245,6 +245,24 @@ class OTPVerifyRequest(BaseModel):
     otp_code: str
 
 
+class PatientPinStatusResponse(BaseModel):
+    phone_number: str
+    exists: bool
+    has_pin: bool
+    is_locked: bool
+    remaining_lockout_seconds: int = 0
+
+
+class PatientSetPinRequest(BaseModel):
+    phone_number: str
+    pin: str
+
+
+class PatientLoginRequest(BaseModel):
+    phone_number: str
+    pin: str
+
+
 class GuestEmergencyRequest(BaseModel):
     guest_name: str
     age: Optional[Union[str, int]] = None
@@ -307,6 +325,122 @@ class ConsentRequest(BaseModel):
 class ErasureRequest(BaseModel):
     patient_id: str
     reason: Optional[str] = "Statutory erasure requested under DPDP Act 2023"
+
+
+@app.get("/api/v1/auth/patient/phone-status", response_model=PatientPinStatusResponse)
+def get_patient_phone_status_endpoint(phone_number: str):
+    """
+    Check if a patient phone number exists in the database, whether a 4-digit PIN
+    is set, and whether the account is currently locked.
+    """
+    from app.db import check_patient_phone_status
+    status_info = check_patient_phone_status(phone_number)
+    return PatientPinStatusResponse(**status_info)
+
+
+@app.post("/api/v1/auth/patient/set-pin", response_model=LoginResponse)
+def set_patient_pin_endpoint(req: PatientSetPinRequest, response: Response):
+    """
+    Set compulsory 4-digit PIN for new patient or account without PIN.
+    Persists salted PBKDF2 hash into database and establishes authenticated session.
+    """
+    from app.db import register_patient_pin
+    success, message, account = register_patient_pin(req.phone_number, req.pin)
+    if not success or not account:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=message,
+        )
+
+    account_id = account["id"]
+    phone_number = account["phone_number"]
+    user_id = f"pat_{account_id[:8]}"
+
+    token = create_token(
+        user_id=user_id,
+        role=UserRole.PATIENT,
+        phone_number=phone_number,
+        account_id=account_id,
+    )
+
+    is_prod = get_settings().env == "production"
+    response.set_cookie(
+        key="grannus_auth_token",
+        value=token,
+        httponly=True,
+        secure=is_prod,
+        samesite="lax",
+        path="/",
+        max_age=86400,
+    )
+
+    get_audit_logger().log(
+        action="AUTH_PATIENT_PIN_REGISTERED",
+        user_id=user_id,
+        role=UserRole.PATIENT.value,
+        details={"account_id": account_id},
+    )
+
+    return LoginResponse(
+        token=token,
+        user_id=user_id,
+        role=UserRole.PATIENT,
+        phone_number=phone_number,
+        account_id=account_id,
+    )
+
+
+@app.post("/api/v1/auth/patient/login", response_model=LoginResponse)
+def login_patient_with_pin_endpoint(req: PatientLoginRequest, response: Response):
+    """
+    Authenticate patient using phone number + 4-digit PIN.
+    Enforces maximum 5 attempts with 15-minute lockout.
+    Sets httpOnly cookie on success.
+    """
+    from app.db import verify_patient_pin
+    success, message, account = verify_patient_pin(req.phone_number, req.pin)
+    if not success or not account:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=message,
+        )
+
+    account_id = account["id"]
+    phone_number = account["phone_number"]
+    user_id = f"pat_{account_id[:8]}"
+
+    token = create_token(
+        user_id=user_id,
+        role=UserRole.PATIENT,
+        phone_number=phone_number,
+        account_id=account_id,
+    )
+
+    is_prod = get_settings().env == "production"
+    response.set_cookie(
+        key="grannus_auth_token",
+        value=token,
+        httponly=True,
+        secure=is_prod,
+        samesite="lax",
+        path="/",
+        max_age=86400,
+    )
+
+    get_audit_logger().log(
+        action="AUTH_PATIENT_PIN_VERIFIED",
+        user_id=user_id,
+        role=UserRole.PATIENT.value,
+        details={"account_id": account_id},
+    )
+
+    return LoginResponse(
+        token=token,
+        user_id=user_id,
+        role=UserRole.PATIENT,
+        phone_number=phone_number,
+        account_id=account_id,
+    )
 
 
 @app.post("/api/v1/auth/otp/request", response_model=OTPRequestResponse)

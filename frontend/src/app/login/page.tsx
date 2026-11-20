@@ -24,8 +24,9 @@ import {
   PhoneCall,
 } from 'lucide-react';
 import {
-  requestPhoneOtp,
-  verifyPhoneOtp,
+  checkPatientPhoneStatus,
+  setPatientPin,
+  loginPatientWithPin,
   loginStaff,
   getPatientProfiles,
   createPatientProfile,
@@ -53,12 +54,11 @@ export default function LoginPage() {
   // Mode: 'patient' or 'staff'
   const [authMode, setAuthMode] = useState<'patient' | 'staff'>('patient');
 
-  // Patient Phone OTP state
+  // Patient Phone & 4-Digit PIN Auth state
   const [phone, setPhone] = useState('');
-  const [otpCode, setOtpCode] = useState('');
-  const [otpSent, setOtpSent] = useState(false);
-  const [cooldown, setCooldown] = useState(0);
-  const [devOtpHint, setDevOtpHint] = useState<string | null>(null);
+  const [authStep, setAuthStep] = useState<'phone' | 'set_pin' | 'enter_pin'>('phone');
+  const [pinValue, setPinValue] = useState('');
+  const [confirmPinValue, setConfirmPinValue] = useState('');
 
   // Patient Profile state (Step 3)
   const [profiles, setProfiles] = useState<PatientProfile[]>([]);
@@ -113,59 +113,91 @@ export default function LoginPage() {
     }
   };
 
-  // Cooldown countdown timer
-  useEffect(() => {
-    if (cooldown <= 0) return;
-    const interval = setInterval(() => {
-      setCooldown((c) => Math.max(0, c - 1));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [cooldown]);
-
-  // 1. Request Phone OTP
-  const handleRequestOtp = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
+  // 1. Phone number verification / status check
+  const handlePhoneContinue = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanPhone = phone.trim();
+    if (!cleanPhone) {
+      setErrorMessage('Please enter a valid mobile number.');
+      return;
+    }
     setErrorMessage('');
     setSuccessMessage('');
     setIsLoading(true);
 
     try {
-      const res = await requestPhoneOtp(phone.trim());
-      setOtpSent(true);
-      setCooldown(60);
-      if (res.dev_otp_hint) {
-        setDevOtpHint(res.dev_otp_hint);
-        setOtpCode(res.dev_otp_hint);
+      const status = await checkPatientPhoneStatus(cleanPhone);
+      if (status.is_locked) {
+        const mins = Math.max(1, Math.ceil(status.remaining_lockout_seconds / 60));
+        setErrorMessage(`Account temporarily locked due to failed attempts. Try again in ${mins} minute(s).`);
+        return;
       }
-      setSuccessMessage(res.message || 'Verification code sent to your phone.');
+
+      if (status.has_pin) {
+        setAuthStep('enter_pin');
+      } else {
+        setAuthStep('set_pin');
+      }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to send verification code.');
+      setErrorMessage(err.message || 'Could not verify phone number.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // 2. Verify Phone OTP
-  const handleVerifyOtp = async (e: React.FormEvent) => {
+  // 2. Set compulsory 4-digit PIN for new account
+  const handleSetPin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!/^\d{4}$/.test(pinValue)) {
+      setErrorMessage('PIN must be exactly 4 numeric digits (0000-9999).');
+      return;
+    }
+    if (pinValue !== confirmPinValue) {
+      setErrorMessage('PINs do not match. Please re-enter your 4-digit PIN.');
+      return;
+    }
     setErrorMessage('');
     setSuccessMessage('');
     setIsLoading(true);
 
     try {
-      await verifyPhoneOtp(phone.trim(), otpCode.trim());
-      setSuccessMessage('Phone verified! Loading family profiles...');
-
-      // Load patient profiles
+      await setPatientPin(phone.trim(), pinValue);
+      setSuccessMessage('Security PIN configured! Loading family profiles...');
       const profs = await getPatientProfiles();
       setProfiles(profs);
       setIsSelectingProfile(true);
-
       if (profs.length === 0) {
         setShowAddProfile(true);
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Verification code invalid.');
+      setErrorMessage(err.message || 'Could not set security PIN.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 3. Verify 4-digit PIN for returning account
+  const handleEnterPin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!/^\d{4}$/.test(pinValue)) {
+      setErrorMessage('Please enter your 4-digit security PIN.');
+      return;
+    }
+    setErrorMessage('');
+    setSuccessMessage('');
+    setIsLoading(true);
+
+    try {
+      await loginPatientWithPin(phone.trim(), pinValue);
+      setSuccessMessage('PIN verified! Loading family profiles...');
+      const profs = await getPatientProfiles();
+      setProfiles(profs);
+      setIsSelectingProfile(true);
+      if (profs.length === 0) {
+        setShowAddProfile(true);
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Incorrect 4-digit PIN.');
     } finally {
       setIsLoading(false);
     }
@@ -572,7 +604,7 @@ export default function LoginPage() {
                     </Button>
                   </div>
                 </form>
-              ) : !otpSent ? (
+              ) : authStep === 'phone' ? (
                 /* Step 1: Phone Input */
                 <div className="space-y-4">
                   {/* Emergency Access Banner (H1.3) */}
@@ -583,7 +615,7 @@ export default function LoginPage() {
                       </div>
                       <div>
                         <p className="text-xs font-semibold text-destructive">Medical Emergency?</p>
-                        <p className="text-xs text-foreground/80 font-medium">Skip OTP to trigger hospital ER assistance.</p>
+                        <p className="text-xs text-foreground/80 font-medium">Skip login to trigger immediate hospital assistance.</p>
                       </div>
                     </div>
                     <Button
@@ -598,42 +630,47 @@ export default function LoginPage() {
                     </Button>
                   </div>
 
-                  <form onSubmit={handleRequestOtp} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Mobile Phone Number</Label>
-                    <div className="relative">
-                      <Input
-                        type="tel"
-                        placeholder="+91 98765 43210"
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                        required
-                        className="h-11 pl-10 text-base"
-                      />
-                      <Phone className="w-4 h-4 text-muted-foreground absolute left-3 top-3.5" />
+                  <form onSubmit={handlePhoneContinue} className="space-y-4">
+                    <div className="space-y-2">
+                      <Label>Mobile Phone Number</Label>
+                      <div className="relative">
+                        <Input
+                          type="tel"
+                          placeholder="+91 98765 43210"
+                          value={phone}
+                          onChange={(e) => setPhone(e.target.value)}
+                          required
+                          className="h-11 pl-10 text-base"
+                        />
+                        <Phone className="w-4 h-4 text-muted-foreground absolute left-3 top-3.5" />
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Enter your mobile number to sign in or register with your 4-digit security PIN.
+                      </p>
                     </div>
-                  </div>
 
-                  <Button
-                    type="submit"
-                    disabled={isLoading}
-                    className="w-full h-11 rounded-lg font-medium gap-2 text-sm"
-                  >
-                    {isLoading ? 'Sending Code...' : 'Send Verification Code'}
-                    <ArrowRight className="w-4 h-4" />
-                  </Button>
-                </form>
-              </div>
-              ) : (
-                /* Step 2: OTP Verification */
-                <form onSubmit={handleVerifyOtp} className="space-y-4">
+                    <Button
+                      type="submit"
+                      disabled={isLoading}
+                      className="w-full h-11 min-h-[44px] rounded-lg font-medium gap-2 text-sm"
+                    >
+                      {isLoading ? 'Checking Account...' : 'Continue'}
+                      <ArrowRight className="w-4 h-4" />
+                    </Button>
+                  </form>
+                </div>
+              ) : authStep === 'set_pin' ? (
+                /* Step 2A: Set Compulsory 4-Digit PIN */
+                <form onSubmit={handleSetPin} className="space-y-4">
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <Label>6-Digit Verification Code</Label>
+                      <Label className="font-semibold text-foreground">Set 4-Digit Security PIN</Label>
                       <button
                         type="button"
                         onClick={() => {
-                          setOtpSent(false);
+                          setAuthStep('phone');
+                          setPinValue('');
+                          setConfirmPinValue('');
                           setErrorMessage('');
                         }}
                         className="text-xs text-primary hover:underline min-h-[44px] inline-flex items-center px-1"
@@ -641,48 +678,92 @@ export default function LoginPage() {
                         Change number
                       </button>
                     </div>
-                    <Input
-                      type="text"
-                      maxLength={6}
-                      placeholder="••••••"
-                      value={otpCode}
-                      onChange={(e) => setOtpCode(e.target.value)}
-                      required
-                      className="h-12 min-h-[44px] text-center text-2xl tracking-widest font-mono font-semibold"
-                    />
-                    <p className="text-xs text-muted-foreground text-center">
-                      Code sent to <span className="font-semibold text-foreground">{phone}</span>
+                    <p className="text-xs text-muted-foreground">
+                      Create a compulsory 4-digit PIN for <span className="font-semibold text-foreground">{phone}</span> to secure your consultations and health records.
                     </p>
-                  </div>
-
-                  {devOtpHint && (
-                    <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-xs text-emerald-700 dark:text-emerald-400 text-center">
-                      Access Code: <span className="font-mono font-bold tracking-wider">{devOtpHint}</span>
+                    <div className="space-y-3 pt-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">New 4-Digit PIN</Label>
+                        <Input
+                          type="password"
+                          inputMode="numeric"
+                          maxLength={4}
+                          placeholder="••••"
+                          value={pinValue}
+                          onChange={(e) => setPinValue(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                          required
+                          className="h-12 min-h-[44px] text-center text-2xl tracking-widest font-mono font-semibold"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">Confirm 4-Digit PIN</Label>
+                        <Input
+                          type="password"
+                          inputMode="numeric"
+                          maxLength={4}
+                          placeholder="••••"
+                          value={confirmPinValue}
+                          onChange={(e) => setConfirmPinValue(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                          required
+                          className="h-12 min-h-[44px] text-center text-2xl tracking-widest font-mono font-semibold"
+                        />
+                      </div>
                     </div>
-                  )}
+                  </div>
 
                   <Button
                     type="submit"
-                    disabled={isLoading || otpCode.length < 6}
+                    disabled={isLoading || pinValue.length !== 4 || confirmPinValue.length !== 4}
+                    className="w-full h-11 min-h-[44px] rounded-lg font-medium gap-2 text-sm mt-2"
+                  >
+                    <Lock className="w-4 h-4" />
+                    {isLoading ? 'Configuring PIN...' : 'Set PIN & Enter'}
+                  </Button>
+                </form>
+              ) : (
+                /* Step 2B: Enter 4-Digit PIN (Returning User) */
+                <form onSubmit={handleEnterPin} className="space-y-4">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="font-semibold text-foreground">Enter 4-Digit Security PIN</Label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAuthStep('phone');
+                          setPinValue('');
+                          setErrorMessage('');
+                        }}
+                        className="text-xs text-primary hover:underline min-h-[44px] inline-flex items-center px-1"
+                      >
+                        Change number
+                      </button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Enter your 4-digit security PIN for <span className="font-semibold text-foreground">{phone}</span> to access your health profile.
+                    </p>
+                    <div className="pt-2">
+                      <Input
+                        type="password"
+                        inputMode="numeric"
+                        maxLength={4}
+                        placeholder="••••"
+                        value={pinValue}
+                        onChange={(e) => setPinValue(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                        required
+                        autoFocus
+                        className="h-12 min-h-[44px] text-center text-2xl tracking-widest font-mono font-semibold"
+                      />
+                    </div>
+                  </div>
+
+                  <Button
+                    type="submit"
+                    disabled={isLoading || pinValue.length !== 4}
                     className="w-full h-11 min-h-[44px] rounded-lg font-medium gap-2 text-sm"
                   >
                     <Lock className="w-4 h-4" />
-                    {isLoading ? 'Verifying Code...' : 'Verify & Continue'}
+                    {isLoading ? 'Verifying PIN...' : 'Verify PIN & Enter'}
                   </Button>
-
-                  <div className="text-center pt-1">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      disabled={cooldown > 0 || isLoading}
-                      onClick={() => handleRequestOtp()}
-                      className="text-xs text-muted-foreground gap-1.5 min-h-[44px]"
-                    >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                      {cooldown > 0 ? `Resend code in ${cooldown}s` : 'Resend Code'}
-                    </Button>
-                  </div>
                 </form>
               )}
             </div>

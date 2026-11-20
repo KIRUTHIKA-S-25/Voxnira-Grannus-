@@ -12,6 +12,7 @@ Provides persistent access to:
   - Audit Log (Append-only security log B3.5)
 """
 import os
+import re
 import hmac
 import hashlib
 import logging
@@ -354,6 +355,273 @@ def verify_phone_otp(phone: str, otp_code: str) -> Tuple[bool, str, Optional[dic
     return True, "Phone number verified successfully.", account
 
 
+PIN_REGEX = re.compile(r"^\d{4}$")
+DEV_TEST_PIN = "1234"
+
+
+def _is_account_locked(account: dict) -> Tuple[bool, int]:
+    """Check if account is temporarily locked due to failed PIN attempts."""
+    locked_until_str = account.get("locked_until")
+    if not locked_until_str:
+        return False, 0
+    try:
+        locked_dt = datetime.fromisoformat(locked_until_str.replace("Z", "+00:00"))
+        now_dt = datetime.now(timezone.utc)
+        if locked_dt > now_dt:
+            remaining = int((locked_dt - now_dt).total_seconds())
+            return True, max(remaining, 1)
+    except Exception:
+        pass
+    return False, 0
+
+
+def check_patient_phone_status(phone: str) -> dict:
+    """
+    Check if a patient phone number exists in the database, whether a 4-digit PIN
+    is set, and whether the account is currently locked.
+    """
+    from app.auth import hash_password
+    phone_norm = normalize_phone(phone)
+    client = get_supabase_client()
+    acc = None
+
+    if client:
+        try:
+            res = client.table("accounts").select("*").eq("phone_number", phone_norm).execute()
+            if res.data:
+                acc = res.data[0]
+        except Exception as exc:
+            logger.error("Supabase check phone status error: %s", exc)
+
+    if not acc:
+        acc = _MEM_ACCOUNTS.get(phone_norm)
+
+    # In dev/test environments, pre-seed recognized test numbers with default PIN "1234"
+    from app.config import get_settings
+    settings = get_settings()
+    is_dev = settings.env in ("development", "test") or settings.allow_dev_otp
+    if not acc and is_dev and (phone_norm in DEV_TEST_NUMBERS or phone in DEV_TEST_NUMBERS):
+        acc = {
+            "id": str(uuid.uuid4()),
+            "phone_number": phone_norm,
+            "pin_hash": hash_password(DEV_TEST_PIN),
+            "failed_pin_attempts": 0,
+            "locked_until": None,
+            "is_verified": True,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        _MEM_ACCOUNTS[phone_norm] = acc
+
+    if not acc:
+        return {
+            "phone_number": phone_norm,
+            "exists": False,
+            "has_pin": False,
+            "is_locked": False,
+            "remaining_lockout_seconds": 0,
+        }
+
+    is_locked, remaining_sec = _is_account_locked(acc)
+    has_pin = bool(acc.get("pin_hash"))
+
+    return {
+        "phone_number": phone_norm,
+        "exists": True,
+        "has_pin": has_pin,
+        "is_locked": is_locked,
+        "remaining_lockout_seconds": remaining_sec,
+    }
+
+
+def register_patient_pin(phone: str, pin: str) -> Tuple[bool, str, Optional[dict]]:
+    """
+    Register compulsory 4-digit PIN for new patient or existing account without PIN.
+    Persists salted PBKDF2 hash into database (accounts table) and memory.
+    """
+    from app.auth import hash_password
+    clean_pin = pin.strip() if pin else ""
+    if not PIN_REGEX.match(clean_pin):
+        return False, "PIN must be exactly 4 numeric digits (0000-9999).", None
+
+    phone_norm = normalize_phone(phone)
+    client = get_supabase_client()
+    acc = None
+
+    if client:
+        try:
+            res = client.table("accounts").select("*").eq("phone_number", phone_norm).execute()
+            if res.data:
+                acc = res.data[0]
+        except Exception as exc:
+            logger.error("Supabase lookup for pin registration error: %s", exc)
+
+    if not acc:
+        acc = _MEM_ACCOUNTS.get(phone_norm)
+
+    if acc and acc.get("pin_hash"):
+        return False, "A security PIN is already configured for this phone number. Please sign in.", None
+
+    pin_hash = hash_password(clean_pin)
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    if acc:
+        acc["pin_hash"] = pin_hash
+        acc["failed_pin_attempts"] = 0
+        acc["locked_until"] = None
+        acc["updated_at"] = now_iso
+        if client:
+            try:
+                client.table("accounts").update({
+                    "pin_hash": pin_hash,
+                    "failed_pin_attempts": 0,
+                    "locked_until": None,
+                    "updated_at": now_iso,
+                }).eq("id", acc["id"]).execute()
+            except Exception as exc:
+                logger.error("Supabase update pin error: %s", exc)
+        _MEM_ACCOUNTS[phone_norm] = acc
+    else:
+        new_acc = {
+            "id": str(uuid.uuid4()),
+            "phone_number": phone_norm,
+            "pin_hash": pin_hash,
+            "failed_pin_attempts": 0,
+            "locked_until": None,
+            "is_verified": True,
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        }
+        if client:
+            try:
+                ins = client.table("accounts").insert(new_acc).execute()
+                if ins.data:
+                    new_acc = ins.data[0]
+            except Exception as exc:
+                logger.error("Supabase insert new account with PIN error: %s", exc)
+        _MEM_ACCOUNTS[phone_norm] = new_acc
+        acc = new_acc
+
+    # Ensure default Self profile exists for account
+    profiles = get_profiles_for_account(acc["id"])
+    if not profiles:
+        create_patient_profile(acc["id"], {
+            "full_name": "Self",
+            "relation": "self",
+            "preferred_language": "ta-IN",
+        })
+
+    logger.info("4-digit PIN registered successfully for patient phone=%s", phone_norm[:5] + "****" + phone_norm[-2:])
+    return True, "Security PIN created successfully.", acc
+
+
+def verify_patient_pin(phone: str, pin: str) -> Tuple[bool, str, Optional[dict]]:
+    """
+    Verify 4-digit PIN for patient authentication against database PBKDF2 hash.
+    Enforces maximum 5 attempts with 15-minute lockout.
+    """
+    from app.auth import verify_password, hash_password
+    clean_pin = pin.strip() if pin else ""
+    if not PIN_REGEX.match(clean_pin):
+        return False, "PIN must be exactly 4 numeric digits.", None
+
+    phone_norm = normalize_phone(phone)
+    client = get_supabase_client()
+    acc = None
+
+    if client:
+        try:
+            res = client.table("accounts").select("*").eq("phone_number", phone_norm).execute()
+            if res.data:
+                acc = res.data[0]
+        except Exception as exc:
+            logger.error("Supabase lookup account for PIN verify error: %s", exc)
+
+    if not acc:
+        acc = _MEM_ACCOUNTS.get(phone_norm)
+
+    # In dev/test, automatically seed dev test numbers with default PIN "1234" if not present
+    from app.config import get_settings
+    settings = get_settings()
+    is_dev = settings.env in ("development", "test") or settings.allow_dev_otp
+    if not acc and is_dev and (phone_norm in DEV_TEST_NUMBERS or phone in DEV_TEST_NUMBERS):
+        acc = {
+            "id": str(uuid.uuid4()),
+            "phone_number": phone_norm,
+            "pin_hash": hash_password(DEV_TEST_PIN),
+            "failed_pin_attempts": 0,
+            "locked_until": None,
+            "is_verified": True,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        _MEM_ACCOUNTS[phone_norm] = acc
+
+    if not acc:
+        return False, "No account found for this phone number. Please set up your PIN.", None
+
+    if not acc.get("pin_hash"):
+        return False, "No security PIN set for this account. Please create your PIN.", None
+
+    # Check lockout
+    is_locked, remaining_sec = _is_account_locked(acc)
+    if is_locked:
+        mins = max(1, (remaining_sec + 59) // 60)
+        return False, f"Account temporarily locked due to too many failed attempts. Try again in {mins} minute(s).", None
+
+    stored_hash = acc["pin_hash"]
+    if not verify_password(clean_pin, stored_hash):
+        current_fails = acc.get("failed_pin_attempts", 0) + 1
+        acc["failed_pin_attempts"] = current_fails
+        update_dict: dict = {"failed_pin_attempts": current_fails}
+
+        if current_fails >= 5:
+            lockout_time = datetime.now(timezone.utc) + timedelta(minutes=15)
+            acc["locked_until"] = lockout_time.isoformat()
+            update_dict["locked_until"] = lockout_time.isoformat()
+            if client:
+                try:
+                    client.table("accounts").update(update_dict).eq("id", acc["id"]).execute()
+                except Exception:
+                    pass
+            _MEM_ACCOUNTS[phone_norm] = acc
+            return False, "Maximum failed attempts exceeded. Account is locked for 15 minutes.", None
+
+        if client:
+            try:
+                client.table("accounts").update(update_dict).eq("id", acc["id"]).execute()
+            except Exception:
+                pass
+        _MEM_ACCOUNTS[phone_norm] = acc
+        attempts_left = 5 - current_fails
+        return False, f"Incorrect 4-digit PIN. {attempts_left} attempt(s) remaining.", None
+
+    # Successful PIN match: reset failed attempts
+    acc["failed_pin_attempts"] = 0
+    acc["locked_until"] = None
+    if client:
+        try:
+            client.table("accounts").update({
+                "failed_pin_attempts": 0,
+                "locked_until": None,
+            }).eq("id", acc["id"]).execute()
+        except Exception:
+            pass
+    _MEM_ACCOUNTS[phone_norm] = acc
+
+    # Ensure profile exists
+    profiles = get_profiles_for_account(acc["id"])
+    if not profiles:
+        create_patient_profile(acc["id"], {
+            "full_name": "Self",
+            "relation": "self",
+            "preferred_language": "ta-IN",
+        })
+
+    logger.info("Patient authenticated successfully via 4-digit PIN: phone=%s", phone_norm[:5] + "****" + phone_norm[-2:])
+    return True, "Authenticated successfully.", acc
+
+
 def _get_or_create_account_db(phone_norm: str) -> dict:
     client = get_supabase_client()
     if client:
@@ -364,6 +632,9 @@ def _get_or_create_account_db(phone_norm: str) -> dict:
             new_acc = {
                 "id": str(uuid.uuid4()),
                 "phone_number": phone_norm,
+                "pin_hash": None,
+                "failed_pin_attempts": 0,
+                "locked_until": None,
                 "is_verified": True,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -380,6 +651,9 @@ def _get_or_create_account_db(phone_norm: str) -> dict:
     new_acc = {
         "id": str(uuid.uuid4()),
         "phone_number": phone_norm,
+        "pin_hash": None,
+        "failed_pin_attempts": 0,
+        "locked_until": None,
         "is_verified": True,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),

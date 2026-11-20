@@ -630,6 +630,83 @@ export interface PatientProfileCreate {
   pin?: string
 }
 
+export interface PatientPinStatus {
+  phone_number: string
+  exists: boolean
+  has_pin: boolean
+  is_locked: boolean
+  remaining_lockout_seconds: number
+}
+
+/**
+ * Check if a phone number exists, has a 4-digit PIN configured, and lockout state.
+ */
+export async function checkPatientPhoneStatus(phoneNumber: string): Promise<PatientPinStatus> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const query = new URLSearchParams({ phone_number: phoneNumber });
+  const res = await fetch(`${baseUrl}/api/v1/auth/patient/phone-status?${query.toString()}`, {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Could not verify phone number status.');
+  }
+
+  return res.json();
+}
+
+/**
+ * Register compulsory 4-digit PIN for new patient or account without PIN.
+ */
+export async function setPatientPin(phoneNumber: string, pin: string): Promise<LoginResponse> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const res = await fetch(`${baseUrl}/api/v1/auth/patient/set-pin`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ phone_number: phoneNumber, pin }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Could not set security PIN.');
+  }
+
+  const data: LoginResponse = await res.json();
+  setAuthToken(data.token);
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('grannus_user', JSON.stringify(data));
+  }
+  return data;
+}
+
+/**
+ * Authenticate returning patient with their 4-digit PIN.
+ */
+export async function loginPatientWithPin(phoneNumber: string, pin: string): Promise<LoginResponse> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const res = await fetch(`${baseUrl}/api/v1/auth/patient/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ phone_number: phoneNumber, pin }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Incorrect 4-digit PIN.');
+  }
+
+  const data: LoginResponse = await res.json();
+  setAuthToken(data.token);
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('grannus_user', JSON.stringify(data));
+  }
+  return data;
+}
+
 /**
  * Request 6-digit OTP for patient phone login.
  */
