@@ -43,11 +43,8 @@ class Settings(BaseSettings):
     jwt_secret_key: str = ""
     phi_encryption_key: str = ""
 
-    # --- SMS Gateway (MSG91 / Twilio) ---
-    sms_provider: str = "msg91"  # "msg91", "twilio", "console"
-    msg91_auth_key: str = ""
-    msg91_template_id: str = ""
-    msg91_sender_id: str = "GRANNU"
+    # --- SMS Gateway (Twilio / Console) ---
+    sms_provider: str = "console"  # "twilio", "console"
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""

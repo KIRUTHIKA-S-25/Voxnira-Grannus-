@@ -995,6 +995,7 @@ export async function getConsultationDetails(consultationId: string): Promise<an
   const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   const res = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}`, {
     headers: getAuthHeaders(),
+    credentials: 'include',
   });
 
   if (!res.ok) {
@@ -1013,6 +1014,7 @@ export async function claimConsultationCase(consultationId: string, lockTtlMinut
       'Content-Type': 'application/json',
       ...getAuthHeaders(),
     },
+    credentials: 'include',
     body: JSON.stringify({ lock_ttl_minutes: lockTtlMinutes }),
   });
 
@@ -1029,6 +1031,7 @@ export async function releaseConsultationCase(consultationId: string): Promise<a
   const res = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}/release`, {
     method: 'POST',
     headers: getAuthHeaders(),
+    credentials: 'include',
   });
 
   if (!res.ok) {
@@ -1052,6 +1055,7 @@ export async function reassignConsultationCase(
       'Content-Type': 'application/json',
       ...getAuthHeaders(),
     },
+    credentials: 'include',
     body: JSON.stringify({
       target_doctor_id: targetDoctorId,
       reason,
@@ -1079,6 +1083,7 @@ export async function overrideUrgencyTier(
       'Content-Type': 'application/json',
       ...getAuthHeaders(),
     },
+    credentials: 'include',
     body: JSON.stringify({
       new_tier: newTier,
       reason,
@@ -1101,6 +1106,7 @@ export async function toggleDoctorAvailability(isOnDuty: boolean): Promise<any> 
       'Content-Type': 'application/json',
       ...getAuthHeaders(),
     },
+    credentials: 'include',
     body: JSON.stringify({ is_on_duty: isOnDuty }),
   });
 
@@ -1118,16 +1124,36 @@ export async function getDoctorRoster(department?: string, onDutyOnly = false): 
   if (department) query.append('department', department);
   if (onDutyOnly) query.append('on_duty_only', 'true');
 
-  const res = await fetch(`${baseUrl}/api/v1/doctor/roster?${query.toString()}`, {
-    headers: getAuthHeaders(),
-  });
+  try {
+    const res = await fetch(`${baseUrl}/api/v1/doctor/roster?${query.toString()}`, {
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Failed to load doctor roster.');
+    if (res.status === 401 || res.status === 403) {
+      return { count: 0, doctors: [], unauthorized: true };
+    }
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to load doctor roster.');
+    }
+
+    return await res.json();
+  } catch (err: any) {
+    if (
+      err.message &&
+      (err.message.includes('401') ||
+        err.message.includes('403') ||
+        err.message.includes('Bearer') ||
+        err.message.includes('token') ||
+        err.message.includes('denied') ||
+        err.message.includes('cookie'))
+    ) {
+      return { count: 0, doctors: [], unauthorized: true };
+    }
+    throw err;
   }
-
-  return res.json();
 }
 
 export interface PrescriptionItem {
@@ -1179,6 +1205,7 @@ export async function recordConsultationAction(req: DoctorActionRequest): Promis
       'Content-Type': 'application/json',
       ...getAuthHeaders(),
     },
+    credentials: 'include',
     body: JSON.stringify(req),
   });
 
@@ -1194,6 +1221,7 @@ export async function getConsultationActions(consultationId: string): Promise<Ac
   const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   const res = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}/actions`, {
     headers: getAuthHeaders(),
+    credentials: 'include',
   });
 
   if (!res.ok) {

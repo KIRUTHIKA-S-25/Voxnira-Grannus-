@@ -56,9 +56,17 @@ export default function DashboardPage() {
           }
           getDoctorRoster()
             .then((res) => {
-              if (res && res.doctors) setDoctorsRoster(res.doctors);
+              if (res && res.doctors) {
+                setDoctorsRoster(res.doctors);
+              } else if (res && res.unauthorized) {
+                localStorage.removeItem('grannus_user');
+                localStorage.removeItem('grannus_auth_token');
+                router.replace('/login');
+              }
             })
-            .catch((e) => console.warn('Could not load roster', e));
+            .catch(() => {
+              // Roster fetch error handled gracefully without crashing UI
+            });
           return;
         }
       }

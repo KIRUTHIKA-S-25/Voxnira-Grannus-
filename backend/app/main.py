@@ -103,13 +103,13 @@ async def lifespan(app: FastAPI):
     if not settings.jwt_secret_key:
         raise RuntimeError("JWT_SECRET_KEY is mandatory and not configured. Backend refusing to start.")
 
-    # Block H2: In production/staging, database and SMS provider must be configured
+    # Block H2: In production/staging, database must be configured
     if settings.env.lower() in ("production", "prod", "staging"):
         key = settings.supabase_service_role_key or settings.supabase_anon_key
         if not settings.supabase_url or not key:
             raise RuntimeError(f"Database (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY) is mandatory in {settings.env}. Backend refusing to start.")
-        if not settings.sms_provider or (settings.sms_provider == "msg91" and not settings.msg91_auth_key) or (settings.sms_provider == "twilio" and not settings.twilio_account_sid):
-            raise RuntimeError(f"SMS provider is mandatory in {settings.env}. Backend refusing to start.")
+        if settings.sms_provider == "twilio" and not settings.twilio_account_sid:
+            raise RuntimeError(f"Twilio SMS provider is selected but twilio_account_sid is not configured in {settings.env}.")
 
     try:
         model = get_model()

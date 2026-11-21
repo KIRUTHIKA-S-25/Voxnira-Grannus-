@@ -18,7 +18,7 @@ export default function ProcessingPage() {
   useEffect(() => {
     // Prevent duplicate execution from React StrictMode or re-renders
     if (hasStartedRef.current) return;
-    
+
     const payload = getPipelinePayload();
     if (!payload || !payload.audio) {
       if (!hasStartedRef.current && !consultationId && !isProcessing) {
@@ -93,7 +93,7 @@ export default function ProcessingPage() {
           <div className="mb-12 animate-gentle-fade-in">
             <ProcessingZen text={getLoadingText()} />
           </div>
-          
+
           <div className="w-full animate-gentle-fade-in" style={{ animationDelay: '0.3s' }}>
             <PipelineFlow currentStage={currentStage} stageProgress={stageProgress} />
           </div>

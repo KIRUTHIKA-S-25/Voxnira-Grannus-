@@ -1,5 +1,5 @@
 """
-Unit tests for MSG91 SMS gateway integration and patient consultation history retrieval.
+Unit tests for SMS gateway integration and patient consultation history retrieval.
 """
 import pytest
 from fastapi.testclient import TestClient

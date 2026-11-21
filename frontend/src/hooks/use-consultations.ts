@@ -44,6 +44,10 @@ export function useConsultations() {
       });
 
       if (res.unauthorized) {
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('grannus_user');
+          localStorage.removeItem('grannus_auth_token');
+        }
         setIsUnauthorized(true);
         setConsultations([]);
         setIsLoading(false);

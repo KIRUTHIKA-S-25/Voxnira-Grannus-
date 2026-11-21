@@ -269,7 +269,7 @@ def request_phone_otp(phone: str) -> Tuple[bool, str, Optional[str]]:
     # Dev hint only provided in development with dev test numbers
     dev_hint = otp_code if (is_dev and (phone_norm in DEV_TEST_NUMBERS or phone in DEV_TEST_NUMBERS)) else None
 
-    # Dispatch via SMS Gateway (MSG91 / Twilio) - Fails closed!
+    # Dispatch via SMS Gateway (Twilio / Console) - Fails closed!
     from app.sms import send_sms_otp
     sms_ok, sms_msg = send_sms_otp(phone_norm, otp_code)
     if not sms_ok:
