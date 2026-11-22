@@ -8,7 +8,8 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-plus-jakarta), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-heading: var(--font-plus-jakarta), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-heading: var(--font-newsreader), "Newsreader", Georgia, serif;
+  --font-serif: var(--font-newsreader), "Newsreader", Georgia, serif;
   --font-mono: var(--font-jetbrains), ui-monospace, monospace;
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
@@ -33,22 +34,14 @@
   --radius-xl: calc(var(--radius) * 1.4);
   --radius-2xl: calc(var(--radius) * 1.8);
 
-  /* Wabi Sabi custom color tokens */
-  --color-wabi-stone-50: #faf9f7;
-  --color-wabi-stone-100: #f0ede8;
-  --color-wabi-stone-200: #e2ddd5;
-  --color-wabi-stone-300: #d0c9be;
-  --color-wabi-stone-400: #a89f91;
-  --color-wabi-stone-500: #8a8072;
-  --color-wabi-stone-600: #6b5e4f;
-  --color-wabi-stone-700: #544a3d;
-  --color-wabi-stone-800: #3d3429;
-  --color-wabi-stone-900: #2a231b;
-  --color-wabi-earth-green: #5a7247;
-  --color-wabi-clay-red: #a65d57;
-  --color-wabi-ochre: #c49a3c;
-  --color-wabi-indigo: #5b6b7a;
-  --color-wabi-moss: #7a8b6a;
+  /* Grannus High-End Health Palette Tokens */
+  --color-alabaster: #FAF8F5;
+  --color-forest-charcoal: #14211D;
+  --color-slate-sage: #4A5550;
+  --color-botanical-emerald: #2D4F3E;
+  --color-crimson-sos: #B83A3A;
+  --color-card-border: #EAE6DF;
+  --color-track-light: #F3F0EA;
 
   --animate-gentle-fade-in: gentle-fade-in 0.6s ease-out forwards;
   --animate-float: float 4s ease-in-out infinite;
@@ -60,50 +53,50 @@
 }
 
 :root {
-  /* Wabi Sabi Light Theme — Warm Stone */
-  --background: #faf9f7;
-  --foreground: #3d3429;
-  --card: #f5f2ed;
-  --card-foreground: #3d3429;
-  --popover: #f5f2ed;
-  --popover-foreground: #3d3429;
-  --primary: #5a7247;
-  --primary-foreground: #faf9f7;
-  --secondary: #f0ede8;
-  --secondary-foreground: #544a3d;
-  --muted: #e2ddd5;
-  --muted-foreground: #4e4438;
-  --accent: #f0ede8;
-  --accent-foreground: #3d3429;
-  --destructive: #a65d57;
-  --destructive-foreground: #faf9f7;
-  --border: #e2ddd5;
-  --input: #e2ddd5;
-  --ring: #5a7247;
+  /* Warm Alabaster & Deep Botanical Emerald Palette */
+  --background: #FAF8F5;
+  --foreground: #14211D;
+  --card: #FFFFFF;
+  --card-foreground: #14211D;
+  --popover: #FFFFFF;
+  --popover-foreground: #14211D;
+  --primary: #2D4F3E;
+  --primary-foreground: #FAF8F5;
+  --secondary: #F3F0EA;
+  --secondary-foreground: #14211D;
+  --muted: #EAE6DF;
+  --muted-foreground: #4A5550;
+  --accent: #F4F6F4;
+  --accent-foreground: #2D4F3E;
+  --destructive: #B83A3A;
+  --destructive-foreground: #FFFFFF;
+  --border: #EAE6DF;
+  --input: #EAE6DF;
+  --ring: #2D4F3E;
   --radius: 0.75rem;
 }
 
 .dark {
-  /* Wabi Sabi Dark Theme — Deep Earth */
-  --background: #1e1b17;
-  --foreground: #f0ede8;
-  --card: #2a2520;
-  --card-foreground: #f0ede8;
-  --popover: #2a2520;
-  --popover-foreground: #f0ede8;
-  --primary: #7a8b6a;
-  --primary-foreground: #1e1b17;
-  --secondary: #3d3429;
-  --secondary-foreground: #f0ede8;
-  --muted: #3d3429;
-  --muted-foreground: #d5cec5;
-  --accent: #3d3429;
-  --accent-foreground: #f0ede8;
-  --destructive: #a65d57;
-  --destructive-foreground: #f0ede8;
-  --border: #3d3429;
-  --input: #3d3429;
-  --ring: #7a8b6a;
+  /* Deep Earth & Forest Luxury Dark Theme */
+  --background: #0E1614;
+  --foreground: #F0EDE8;
+  --card: #15221E;
+  --card-foreground: #F0EDE8;
+  --popover: #15221E;
+  --popover-foreground: #F0EDE8;
+  --primary: #528069;
+  --primary-foreground: #FAF8F5;
+  --secondary: #1F2E29;
+  --secondary-foreground: #F0EDE8;
+  --muted: #243530;
+  --muted-foreground: #9AA8A1;
+  --accent: #1C2B26;
+  --accent-foreground: #7DB399;
+  --destructive: #D15151;
+  --destructive-foreground: #FAF8F5;
+  --border: #243530;
+  --input: #243530;
+  --ring: #528069;
 }
 
 @keyframes gentle-fade-in {

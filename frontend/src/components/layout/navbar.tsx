@@ -87,20 +87,18 @@ export function Navbar() {
         </Link>
 
         {/* Desktop Nav Links */}
-        <div className="hidden lg:flex items-center gap-6">
+        <div className="hidden lg:flex items-center gap-7">
           {links.map((link) => {
             const isActive = pathname === link.href;
-            const Icon = link.icon;
             return (
               <Link key={link.href} href={link.href} className="relative py-2 px-1 group">
-                <div
-                  className={`flex items-center gap-2 text-sm font-medium transition-colors ${
-                    isActive ? 'text-foreground' : 'text-muted-foreground group-hover:text-foreground'
+                <span
+                  className={`text-sm font-medium transition-colors tracking-tight ${
+                    isActive ? 'text-foreground font-semibold' : 'text-muted-foreground group-hover:text-foreground'
                   }`}
                 >
-                  <Icon className="w-4 h-4" />
                   {link.label}
-                </div>
+                </span>
                 {isActive && (
                   <motion.div
                     layoutId="navbar-indicator"
@@ -182,7 +180,7 @@ export function Navbar() {
           {/* Direct Emergency SOS Action */}
           <a
             href="tel:108"
-            className="flex items-center justify-center gap-1.5 px-4 py-2.5 min-h-[44px] rounded-full bg-destructive text-destructive-foreground font-bold text-xs shadow-sm hover:bg-destructive/90 transition-all shrink-0"
+            className="flex items-center justify-center gap-1.5 px-3.5 py-2 min-h-[40px] rounded-full border border-destructive text-destructive bg-transparent hover:bg-destructive hover:text-white font-semibold text-xs transition-all duration-200 shrink-0 shadow-xs"
             title="Emergency National Ambulance: Dial 108 immediately"
           >
             <PhoneCall className="w-3.5 h-3.5" />

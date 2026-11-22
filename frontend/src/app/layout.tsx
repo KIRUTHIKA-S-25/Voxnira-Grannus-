@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { Plus_Jakarta_Sans, JetBrains_Mono } from 'next/font/google'
+import { Plus_Jakarta_Sans, JetBrains_Mono, Newsreader } from 'next/font/google'
 import './globals.css'
 import { Navbar } from '@/components/layout/navbar'
 import { AdvisoryBanner } from '@/components/layout/demo-banner'
@@ -17,6 +17,13 @@ const jetbrainsMono = JetBrains_Mono({
   variable: '--font-jetbrains',
   display: 'swap',
 })
+const newsreader = Newsreader({
+  subsets: ['latin'],
+  variable: '--font-newsreader',
+  weight: ['400', '500', '600'],
+  style: ['normal', 'italic'],
+  display: 'swap',
+})
 
 export const metadata: Metadata = {
   title: 'Grannus RuralCare AI — Clinical Voice Triage & Telemedicine Platform',
@@ -26,7 +33,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={`${plusJakarta.variable} ${jetbrainsMono.variable} font-sans antialiased min-h-screen flex flex-col bg-paper-grain`}>
+      <body className={`${plusJakarta.variable} ${jetbrainsMono.variable} ${newsreader.variable} font-sans antialiased min-h-screen flex flex-col bg-background text-foreground`}>
         <AdvisoryBanner />
         <Navbar />
         <main className="flex-1">

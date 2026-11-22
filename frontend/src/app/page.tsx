@@ -12,7 +12,6 @@ import {
   Radio,
   Stethoscope,
   Globe,
-  CheckCircle2,
   Clock,
   HeartPulse,
   Building2,
@@ -160,10 +159,10 @@ export default function LandingPage() {
               initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.7, delay: 0.1 }}
-              className="text-4xl sm:text-5xl lg:text-6xl font-heading font-bold text-foreground tracking-tight leading-[1.15] mb-6"
+              className="text-4xl sm:text-5xl lg:text-6xl font-heading font-medium text-foreground tracking-[-0.02em] leading-[1.15] mb-6"
             >
               Intelligent Voice Triage for{' '}
-              <span className="text-primary underline decoration-primary/30 decoration-wavy decoration-2 underline-offset-8">
+              <span className="font-serif italic font-normal text-primary">
                 Rural Primary Health
               </span>
             </motion.h1>
@@ -187,7 +186,7 @@ export default function LandingPage() {
               <Button
                 size="lg"
                 onClick={() => router.push('/input')}
-                className="w-full sm:w-auto h-14 px-8 rounded-full text-base font-semibold shadow-lg hover:shadow-primary/25 bg-primary hover:bg-primary/95 text-primary-foreground gap-3 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
+                className="w-full sm:w-auto h-14 px-8 rounded-full text-base font-medium bg-primary hover:bg-primary/95 text-primary-foreground shadow-[0_10px_25px_-5px_rgba(45,79,62,0.25)] gap-3 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
               >
                 <div className="w-8 h-8 rounded-full bg-primary-foreground/15 flex items-center justify-center">
                   <Mic className="w-4 h-4 text-primary-foreground" />
@@ -200,7 +199,7 @@ export default function LandingPage() {
                 size="lg"
                 variant="outline"
                 onClick={() => router.push('/dashboard')}
-                className="w-full sm:w-auto h-14 px-8 rounded-full text-base font-medium glass-card hover:bg-card/90 border-border/80 gap-3 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
+                className="w-full sm:w-auto h-14 px-8 rounded-full text-base font-medium bg-transparent hover:bg-secondary/60 border border-[#D5D0C5] dark:border-border text-foreground gap-3 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
               >
                 <Stethoscope className="w-4 h-4 text-primary" />
                 <span>Doctor Workstation</span>
@@ -212,20 +211,13 @@ export default function LandingPage() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.8, delay: 0.4 }}
-              className="flex flex-wrap items-center justify-center gap-6 mt-8 text-xs text-muted-foreground"
+              className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 mt-8 text-xs text-muted-foreground font-medium"
             >
-              <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-primary" />
-                <span>Zero App Download Needed</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-primary" />
-                <span>Safe 4-Digit PIN Access</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-primary" />
-                <span>Licensed Doctor-in-the-Loop</span>
-              </div>
+              <span>Zero App Download Needed</span>
+              <span className="text-border select-none" aria-hidden="true">|</span>
+              <span>Safe 4-Digit PIN Access</span>
+              <span className="text-border select-none" aria-hidden="true">|</span>
+              <span>Licensed Doctor-in-the-Loop</span>
             </motion.div>
           </div>
 
@@ -234,24 +226,24 @@ export default function LandingPage() {
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, delay: 0.35 }}
-            className="w-full max-w-4xl mx-auto rounded-3xl glass-card border border-border/70 p-5 sm:p-7 shadow-xl shadow-black/5 relative overflow-hidden"
+            className="w-full max-w-4xl mx-auto rounded-3xl bg-card border border-[#EAE6DF] dark:border-border p-5 sm:p-7 shadow-[0_24px_48px_-12px_rgba(20,33,29,0.06)] relative overflow-hidden"
           >
             {/* Top Bar with Live Badge & Language Switcher */}
             <div className="flex flex-wrap items-center justify-between gap-4 pb-5 border-b border-border/50">
               <div className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse-glow" />
+                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse-glow" />
                 <div>
                   <h3 className="font-heading font-semibold text-sm text-foreground flex items-center gap-2">
                     Live Telemetry Preview
-                    <span className="text-[11px] font-mono font-normal text-muted-foreground px-2 py-0.5 rounded-md bg-muted/60">
+                    <span className="text-[11px] font-mono font-normal text-muted-foreground px-2 py-0.5 rounded-md bg-secondary/80 border border-border/50">
                       STT + Clinical Triage Pipeline
                     </span>
                   </h3>
                 </div>
               </div>
 
-              {/* Language Pills */}
-              <div className="flex items-center gap-1.5 bg-muted/50 p-1 rounded-full border border-border/60">
+              {/* Language Pills - Segmented Control */}
+              <div className="flex items-center gap-1 bg-[#F3F0EA] dark:bg-muted/40 p-1 rounded-full border border-[#EAE6DF] dark:border-border">
                 {DEMO_CASES.map((item) => (
                   <button
                     key={item.id}
@@ -259,10 +251,10 @@ export default function LandingPage() {
                       setSelectedDemo(item);
                       setIsPlayingAudio(false);
                     }}
-                    className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
+                    className={`px-3 py-1 rounded-full text-xs transition-all duration-200 ${
                       selectedDemo.id === item.id
-                        ? 'bg-primary text-primary-foreground shadow-xs'
-                        : 'text-muted-foreground hover:text-foreground'
+                        ? 'bg-card text-foreground shadow-xs font-semibold'
+                        : 'text-muted-foreground hover:text-foreground font-medium'
                     }`}
                   >
                     {item.langName}
@@ -295,7 +287,7 @@ export default function LandingPage() {
                     {[18, 32, 22, 45, 28, 55, 38, 48, 20, 60, 42, 30, 52, 25, 40, 20, 35, 50, 28, 15].map((h, idx) => (
                       <span
                         key={idx}
-                        className={`w-1 rounded-full bg-primary/70 transition-all duration-300 ${
+                        className={`w-1 rounded-full bg-gradient-to-t from-primary to-primary/60 transition-all duration-300 ${
                           isPlayingAudio ? 'animate-pulse' : ''
                         }`}
                         style={{
@@ -377,9 +369,9 @@ export default function LandingPage() {
                         {selectedDemo.symptoms.map((s, idx) => (
                           <span
                             key={idx}
-                            className="text-xs px-2.5 py-1 rounded-md bg-card border border-border/80 text-foreground/80 font-medium"
+                            className="text-xs px-2.5 py-1 rounded-md bg-[#F4F6F4] dark:bg-primary/10 text-primary border border-[#E2E8E2] dark:border-primary/20 font-medium"
                           >
-                            • {s}
+                            {s}
                           </span>
                         ))}
                       </div>
