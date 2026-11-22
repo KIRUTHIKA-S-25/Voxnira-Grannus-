@@ -15,13 +15,9 @@ import {
   LogIn,
   LogOut,
   Clock,
-  Lock,
-  CheckCircle2,
-  AlertCircle,
   Radio,
-  UserCheck,
   Stethoscope,
-  ArrowRight,
+  Lock,
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -50,7 +46,8 @@ export default function DashboardPage() {
   useEffect(() => {
     try {
       const stored = localStorage.getItem('grannus_user');
-      if (stored) {
+      const token = localStorage.getItem('grannus_auth_token');
+      if (stored && token) {
         const u = JSON.parse(stored);
         if (['doctor', 'nurse', 'admin'].includes(u.role)) {
           setCurrentUser(u);
@@ -74,6 +71,8 @@ export default function DashboardPage() {
         }
       }
       // Redirect unauthenticated visitors to login (A1, B10)
+      localStorage.removeItem('grannus_user');
+      localStorage.removeItem('grannus_auth_token');
       router.replace('/login');
     } catch (e) {
       console.warn('Session check:', e);

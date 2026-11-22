@@ -95,7 +95,14 @@ export function useConsultations() {
   }, [filterByPriority, filterByDepartment, searchQuery]);
 
   useEffect(() => {
-    fetchConsultations();
+    let ignore = false;
+    const run = async () => {
+      await fetchConsultations();
+    };
+    run();
+    return () => {
+      ignore = true;
+    };
   }, [fetchConsultations]);
 
   return {

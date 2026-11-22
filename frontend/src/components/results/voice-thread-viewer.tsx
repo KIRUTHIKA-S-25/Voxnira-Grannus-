@@ -70,7 +70,14 @@ export function VoiceThreadViewer({
   }, [consultationId]);
 
   useEffect(() => {
-    loadThread();
+    let ignore = false;
+    const run = async () => {
+      await loadThread();
+    };
+    run();
+    return () => {
+      ignore = true;
+    };
   }, [loadThread]);
 
   // Audio Playback Controls (F2.8: play with speed and repeat controls)

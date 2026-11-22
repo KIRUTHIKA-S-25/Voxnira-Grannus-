@@ -11,10 +11,11 @@ export function Waveform({ isRecording, isPlaying }: { isRecording: boolean; isP
       interval = setInterval(() => {
         setBars(prev => prev.map(() => Math.floor(Math.random() * 80) + 10));
       }, 100);
-    } else {
-      setBars(Array(40).fill(10));
     }
-    return () => clearInterval(interval);
+    return () => {
+      if (interval) clearInterval(interval);
+      setBars(Array(40).fill(10));
+    };
   }, [isRecording, isPlaying]);
 
   return (
