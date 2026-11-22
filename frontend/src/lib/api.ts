@@ -249,8 +249,32 @@ export function getAuthHeaders(): Record<string, string> {
   return headers;
 }
 
+export async function recordPatientConsent(params: {
+  language_code: string;
+  profile_id?: string;
+}): Promise<{ consent_id: string }> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const response = await fetch(`${baseUrl}/api/v1/consent/record`, {
+    method: 'POST',
+    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({
+      language_code: params.language_code,
+      explicit_consent: true,
+      profile_id: params.profile_id,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(response.status === 401
+      ? 'Your session expired. Sign in again before recording consent.'
+      : 'We could not save your consent. Please try again before sending audio.');
+  }
+  return response.json();
+}
+
 export async function processAudio(params: {
   audio: Blob;
+  consent_id: string;
   language_code?: string;
   doctor_preferred_language?: string;
   age?: string;
@@ -259,9 +283,13 @@ export async function processAudio(params: {
   known_conditions?: string;
   current_medications?: string;
   profile_id?: string;
+  patient_name?: string;
+  latitude?: number;
+  longitude?: number;
 }): Promise<PipelineResult> {
   const formData = new FormData();
   formData.append('audio', params.audio, 'recording.webm');
+  formData.append('consent_id', params.consent_id);
   if (params.language_code) formData.append('language_code', params.language_code);
   if (params.doctor_preferred_language) formData.append('doctor_preferred_language', params.doctor_preferred_language);
   if (params.age) formData.append('age', params.age);
@@ -270,11 +298,15 @@ export async function processAudio(params: {
   if (params.known_conditions) formData.append('known_conditions', params.known_conditions);
   if (params.current_medications) formData.append('current_medications', params.current_medications);
   if (params.profile_id) formData.append('profile_id', params.profile_id);
+  if (params.patient_name) formData.append('patient_name', params.patient_name);
+  if (params.latitude !== undefined && params.latitude !== null) formData.append('latitude', String(params.latitude));
+  if (params.longitude !== undefined && params.longitude !== null) formData.append('longitude', String(params.longitude));
 
   const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   const response = await fetch(`${baseUrl}/api/v1/pipeline/process-audio`, {
     method: 'POST',
     headers: getAuthHeaders(),
+    credentials: 'include',
     body: formData,
   });
 
@@ -394,6 +426,7 @@ export async function exportFhirBundle(result: PipelineResult): Promise<Record<s
  */
 export async function submitAudioAsync(params: {
   audio: Blob;
+  consent_id: string;
   language_code?: string;
   doctor_preferred_language?: string;
   age?: string;
@@ -408,6 +441,7 @@ export async function submitAudioAsync(params: {
 }): Promise<{ job_id: string; status: string; poll_url: string; message: string }> {
   const formData = new FormData();
   formData.append('audio', params.audio, 'recording.webm');
+  formData.append('consent_id', params.consent_id);
   if (params.language_code) formData.append('language_code', params.language_code);
   if (params.doctor_preferred_language) formData.append('doctor_preferred_language', params.doctor_preferred_language);
   if (params.age) formData.append('age', params.age);
@@ -424,6 +458,7 @@ export async function submitAudioAsync(params: {
   const response = await fetch(`${baseUrl}/api/v1/pipeline/submit-audio`, {
     method: 'POST',
     headers: getAuthHeaders(),
+    credentials: 'include',
     body: formData,
   });
 
@@ -707,53 +742,6 @@ export async function loginPatientWithPin(phoneNumber: string, pin: string): Pro
   return data;
 }
 
-/**
- * Request 6-digit OTP for patient phone login.
- */
-export async function requestPhoneOtp(phoneNumber: string): Promise<{
-  success: boolean
-  message: string
-  dev_otp_hint?: string
-}> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-  const res = await fetch(`${baseUrl}/api/v1/auth/otp/request`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ phone_number: phoneNumber }),
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Could not send verification code.');
-  }
-
-  return res.json();
-}
-
-/**
- * Verify phone OTP and establish authenticated patient session.
- */
-export async function verifyPhoneOtp(phoneNumber: string, otpCode: string): Promise<LoginResponse> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-  const res = await fetch(`${baseUrl}/api/v1/auth/otp/verify`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ phone_number: phoneNumber, otp_code: otpCode }),
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Invalid verification code.');
-  }
-
-  const data: LoginResponse = await res.json();
-  setAuthToken(data.token);
-  if (typeof window !== 'undefined') {
-    localStorage.setItem('grannus_user', JSON.stringify(data));
-  }
-  return data;
-}
-
 export interface GuestEmergencyResponse {
   success: boolean;
   guest_token: string;
@@ -800,7 +788,6 @@ export interface SOSDispatchPayload {
   accuracy?: number;
   patient_name?: string;
   patient_phone?: string;
-  contact_phone?: string;
   emergency_type?: string;
   notes?: string;
 }
@@ -813,13 +800,13 @@ export interface SOSDispatchResponse {
   emergency_number: string;
   location_recorded: boolean;
   map_url?: string | null;
-  contact_notified: boolean;
   message: string;
   timestamp: string;
 }
 
 /**
- * Dispatch an Emergency SOS alert with GPS coordinates to hospital dispatch & SMS contact (E2).
+ * Record an emergency SOS request. Patients must call emergency services themselves.
+ * This does not dispatch ambulance or emergency services.
  */
 export async function triggerEmergencySOS(params: SOSDispatchPayload): Promise<SOSDispatchResponse> {
   const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -989,6 +976,28 @@ export async function getDoctorQueue(params?: {
     }
     throw err;
   }
+}
+
+export async function getAdminOperationalCases(search = ''): Promise<{ count: number; cases: any[] }> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const url = new URL(`${baseUrl}/api/v1/admin/cases`);
+  if (search.trim()) url.searchParams.set('search', search.trim());
+  const res = await fetch(url.toString(), { headers: getAuthHeaders(), credentials: 'include' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to load operational cases.');
+  }
+  return res.json();
+}
+
+export async function getRoutingSuggestion(consultationId: string): Promise<any> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const res = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}/routing-suggestion`, { headers: getAuthHeaders(), credentials: 'include' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to load routing suggestion.');
+  }
+  return res.json();
 }
 
 export async function getConsultationDetails(consultationId: string): Promise<any> {
@@ -1165,6 +1174,7 @@ export interface PrescriptionItem {
 }
 
 export type DoctorActionType =
+  | 'DOCUMENT_CASE'
   | 'CONFIRM_TRIAGE'
   | 'OVERRIDE_PRIORITY'
   | 'PRESCRIBE_MEDICATION'
@@ -1176,6 +1186,7 @@ export interface DoctorActionRequest {
   consultation_id: string;
   action_type: DoctorActionType;
   clinical_notes: string;
+  disposition?: 'handled' | 'follow_up_required' | 'referred';
   new_priority?: string;
   referral_hospital?: string;
   referral_urgency?: string;
@@ -1190,6 +1201,7 @@ export interface ActionRecord {
   state_medical_council?: string;
   action_type: DoctorActionType;
   clinical_notes: string;
+  disposition?: 'handled' | 'follow_up_required' | 'referred';
   new_priority?: string;
   referral_hospital?: string;
   referral_urgency?: string;

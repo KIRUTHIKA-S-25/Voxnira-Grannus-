@@ -121,7 +121,7 @@ export default function LandingPage() {
     },
     {
       title: 'Safety Guardrails & SOS',
-      desc: 'Instant red-flag detection triggers emergency siren alerts, nearby ambulance dispatch coordinates, and zero-delay guidance.',
+      desc: 'Red-flag guidance helps patients share their location and call local emergency services quickly.',
       icon: Shield,
       tag: 'Protocol Aligned',
     },

@@ -20,7 +20,7 @@ export default function ProcessingPage() {
     if (hasStartedRef.current) return;
 
     const payload = getPipelinePayload();
-    if (!payload || !payload.audio) {
+    if (!payload || !payload.audio || !payload.consent_id) {
       if (!hasStartedRef.current && !consultationId && !isProcessing) {
         router.push('/input');
       }
@@ -39,6 +39,7 @@ export default function ProcessingPage() {
         }
         processAudio({
           audio: blob,
+          consent_id: payload.consent_id!,
           language_code: payload.language_code === 'unknown' ? undefined : payload.language_code,
           doctor_preferred_language: payload.doctor_preferred_language,
           age: payload.age,
@@ -78,9 +79,25 @@ export default function ProcessingPage() {
   const handleRetry = () => {
     reset();
     hasStartedRef.current = false;
-    if (cachedPayloadRef.current) {
-      setPipelinePayload(cachedPayloadRef.current);
-      window.location.reload();
+    const payload = cachedPayloadRef.current;
+    if (payload?.audio instanceof Blob && payload.consent_id) {
+      hasStartedRef.current = true;
+      setPipelinePayload(payload);
+      void processAudio({
+        audio: payload.audio,
+        consent_id: payload.consent_id,
+        language_code: payload.language_code === 'unknown' ? undefined : payload.language_code,
+        doctor_preferred_language: payload.doctor_preferred_language,
+        age: payload.age,
+        gender: payload.gender,
+        reported_duration: payload.reported_duration,
+        known_conditions: payload.known_conditions,
+        current_medications: payload.current_medications,
+        profile_id: payload.profile_id,
+        patient_name: payload.patient_name,
+        latitude: payload.latitude,
+        longitude: payload.longitude,
+      });
     } else {
       router.push('/input');
     }

@@ -102,7 +102,7 @@ export default function LoginPage() {
         guest_name: guestName.trim() || 'Emergency Patient',
         age: guestAge.trim() || undefined,
       });
-      setSuccessMessage('Emergency intake registered. Connecting to emergency protocol...');
+      setSuccessMessage('Emergency intake recorded. Call 108 or 112 now; this app does not dispatch an ambulance.');
       setTimeout(() => {
         router.push(`/results?id=${res.case_id}`);
       }, 400);
@@ -314,7 +314,7 @@ export default function LoginPage() {
                 : 'text-foreground/75 hover:text-foreground'
             }`}
           >
-            Patient (Phone OTP)
+            Patient (Phone + PIN)
           </button>
           <button
             type="button"
@@ -347,7 +347,7 @@ export default function LoginPage() {
             {authMode === 'patient'
               ? isSelectingProfile
                 ? 'Who is this voice consultation for?'
-                : 'Enter your mobile number to receive a secure 6-digit OTP code.'
+                : 'Enter your mobile number to continue with your 4-digit security PIN.'
               : 'Sign in with your hospital email and registered medical license.'}
           </CardDescription>
         </CardHeader>
@@ -592,7 +592,7 @@ export default function LoginPage() {
                       disabled={isEmergencyLoading}
                       className="w-full font-semibold text-sm h-11 min-h-[44px] gap-2"
                     >
-                      {isEmergencyLoading ? 'Alerting Hospital Casualty...' : 'Dispatch ER Alert & View Nearest Hospital'}
+                      {isEmergencyLoading ? 'Recording emergency intake...' : 'Record Emergency Intake'}
                     </Button>
                     <Button
                       type="button"
@@ -615,7 +615,7 @@ export default function LoginPage() {
                       </div>
                       <div>
                         <p className="text-xs font-semibold text-destructive">Medical Emergency?</p>
-                        <p className="text-xs text-foreground/80 font-medium">Skip login to trigger immediate hospital assistance.</p>
+                        <p className="text-xs text-foreground/80 font-medium">Skip login to record an emergency intake. Call 108 or 112 for immediate help.</p>
                       </div>
                     </div>
                     <Button

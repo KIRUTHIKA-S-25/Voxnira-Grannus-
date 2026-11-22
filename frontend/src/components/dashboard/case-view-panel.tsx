@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { PriorityBadge } from '@/components/results/priority-badge';
 import { AcousticBiomarkerCard } from '@/components/results/acoustic-biomarker-card';
 import { VoiceReplyRecorder } from '@/components/dashboard/voice-reply-recorder';
@@ -12,6 +12,9 @@ import {
   reassignConsultationCase,
   overrideUrgencyTier,
   recordConsultationAction,
+  getConsultationActions,
+  getRoutingSuggestion,
+  ActionRecord,
   PrescriptionItem,
 } from '@/lib/api';
 import {
@@ -70,6 +73,27 @@ export function CaseViewPanel({
     { medication_name: '', dosage: '', frequency: '', duration: '', instructions: '' },
   ]);
   const [isSubmittingPrescription, setIsSubmittingPrescription] = useState(false);
+  const [caseNote, setCaseNote] = useState('');
+  const [caseDisposition, setCaseDisposition] = useState<'handled' | 'follow_up_required' | 'referred'>('handled');
+  const [isSavingCaseNote, setIsSavingCaseNote] = useState(false);
+  const [clinicalHistory, setClinicalHistory] = useState<ActionRecord[]>([]);
+  const [routingSuggestion, setRoutingSuggestion] = useState<any | null>(null);
+
+  useEffect(() => {
+    if (!consultation?.id || currentUser?.role !== 'doctor') {
+      setClinicalHistory([]);
+      return;
+    }
+    getConsultationActions(consultation.id).then(setClinicalHistory).catch(() => setClinicalHistory([]));
+  }, [consultation?.id, currentUser?.role]);
+
+  useEffect(() => {
+    if (!consultation?.id || currentUser?.role !== 'nurse') {
+      setRoutingSuggestion(null);
+      return;
+    }
+    getRoutingSuggestion(consultation.id).then(setRoutingSuggestion).catch(() => setRoutingSuggestion(null));
+  }, [consultation?.id, currentUser?.role]);
 
   if (!consultation) {
     return (
@@ -83,7 +107,7 @@ export function CaseViewPanel({
     );
   }
 
-  const res = consultation.result || {};
+  const res = consultation.result || consultation.full_result || {};
   const patientLang = consultation.patient_language || res.patient_input?.language || 'ta-IN';
   const isEmergency = consultation.urgency_tier === 'emergency' || res.priority?.urgency_tier === 'emergency';
   const isClaimedByMe = consultation.is_claimed && (consultation.claimed_by_id === currentUser?.user_id || consultation.claimed_by_id === currentUser?.sub);
@@ -127,7 +151,7 @@ export function CaseViewPanel({
     }
     setActionError(null);
     try {
-      await reassignConsultationCase(consultation.id, targetDoctorId, reassignReason);
+      await reassignConsultationCase(consultation.id, targetDoctorId, reassignReason, routingSuggestion?.department_code || consultation.department_id);
       setShowReassignModal(false);
       setReassignReason('');
       setActionSuccess('Case successfully reassigned.');
@@ -204,6 +228,31 @@ export function CaseViewPanel({
       setActionError(err.message || 'Failed to approve prescription.');
     } finally {
       setIsSubmittingPrescription(false);
+    }
+  };
+
+  const handleCaseNoteSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (caseNote.trim().length < 3) {
+      setActionError('Enter a clinical note of at least 3 characters.');
+      return;
+    }
+    setIsSavingCaseNote(true);
+    setActionError(null);
+    try {
+      await recordConsultationAction({
+        consultation_id: consultation.id,
+        action_type: 'DOCUMENT_CASE',
+        clinical_notes: caseNote.trim(),
+        disposition: caseDisposition,
+      });
+      setCaseNote('');
+      setActionSuccess('Clinical note and case disposition saved.');
+      onUpdate();
+    } catch (err: any) {
+      setActionError(err.message || 'Unable to save case documentation.');
+    } finally {
+      setIsSavingCaseNote(false);
     }
   };
 
@@ -334,8 +383,8 @@ export function CaseViewPanel({
         </div>
       )}
 
-      {/* Dual Transcripts (F3.3) */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* Source transcripts are restricted to treating clinicians. */}
+      {currentUser?.role === 'doctor' && <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="bg-muted/30 border border-border rounded-xl p-4">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
@@ -357,13 +406,13 @@ export function CaseViewPanel({
             "{res.patient_input?.transcript_english || consultation.english_transcript || 'No translated text available'}"
           </p>
         </div>
-      </div>
+      </div>}
 
       {/* Reported Symptoms & Pertinent Negatives */}
       <div className="space-y-3">
         <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Clinical Findings</h4>
         <div className="flex flex-wrap gap-2">
-          {(res.clinical_summary?.symptoms?.filter((s: any) => !s.negated) || []).map((s: any, idx: number) => (
+          {((res.clinical_summary?.symptoms || consultation.symptom_summary || []).filter((s: any) => !s.negated)).map((s: any, idx: number) => (
             <span
               key={idx}
               className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border ${
@@ -377,7 +426,7 @@ export function CaseViewPanel({
             </span>
           ))}
 
-          {(res.clinical_summary?.symptoms?.filter((s: any) => s.negated) || []).map((s: any, idx: number) => (
+          {((res.clinical_summary?.symptoms || consultation.symptom_summary || []).filter((s: any) => s.negated)).map((s: any, idx: number) => (
             <span
               key={`neg-${idx}`}
               className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium bg-muted/60 text-muted-foreground border border-border line-through"
@@ -388,10 +437,15 @@ export function CaseViewPanel({
         </div>
       </div>
 
+      {currentUser?.role === 'nurse' && consultation.relevant_history && <div className="p-3 bg-muted/20 border border-border rounded-xl text-xs space-y-1">
+        <span className="font-semibold uppercase tracking-wider text-[10px]">Relevant patient context</span>
+        {Object.entries(consultation.relevant_history).filter(([, values]) => Array.isArray(values) && values.length > 0).map(([label, values]) => <div key={label}><span className="text-muted-foreground">{label.replaceAll('_', ' ')}:</span> {(values as string[]).join(', ')}</div>)}
+      </div>}
+
       {/* Patient Background / Context */}
-      {(res.clinical_summary?.existing_conditions?.length > 0 ||
+      {(currentUser?.role === 'doctor' && (res.clinical_summary?.existing_conditions?.length > 0 ||
         res.clinical_summary?.medications?.length > 0 ||
-        res.clinical_summary?.allergies?.length > 0) && (
+        res.clinical_summary?.allergies?.length > 0)) && (
         <div className="p-3 bg-muted/20 border border-border rounded-xl text-xs space-y-1">
           <span className="font-semibold text-foreground uppercase tracking-wider text-[10px]">Patient Context:</span>
           {res.clinical_summary?.existing_conditions?.length > 0 && (
@@ -444,7 +498,7 @@ export function CaseViewPanel({
       )}
 
       {/* Doctor Action Controls: Re-route, Override Tier, Request More Info (F3.5) */}
-      <div className="pt-4 border-t border-border flex flex-wrap gap-2">
+      {currentUser?.role === 'doctor' && <div className="pt-4 border-t border-border flex flex-wrap gap-2">
         <Button
           variant="outline"
           size="sm"
@@ -473,7 +527,31 @@ export function CaseViewPanel({
         </Button>
 
         {res && <FhirExportButton result={res} />}
-      </div>
+      </div>}
+
+      {currentUser?.role === 'nurse' && <div className="p-4 border border-primary/20 bg-primary/5 rounded-xl space-y-2">
+        <p className="text-sm font-semibold">Nurse review and doctor assignment</p>
+        <p className="text-xs text-muted-foreground">{routingSuggestion?.enabled ? `Rule based suggestion: ${routingSuggestion.department_code} (${Math.round(routingSuggestion.accuracy * 100)}% on ${routingSuggestion.sample_count} clinician labeled cases). You must review and confirm the doctor.` : 'Rule based specialty suggestions are disabled until a clinician labeled holdout reaches 90% top-1 accuracy. Review the symptoms and select the appropriate doctor manually.'}</p>
+        <Button size="sm" onClick={() => setShowReassignModal(true)} className="text-xs">Select doctor and confirm assignment</Button>
+      </div>}
+
+      {currentUser?.role === 'doctor' && <form onSubmit={handleCaseNoteSubmit} className="p-4 border border-border rounded-xl space-y-3">
+        <h4 className="text-sm font-semibold">Clinical note and disposition</h4>
+        <textarea value={caseNote} onChange={(e) => setCaseNote(e.target.value)} minLength={3} required rows={4} className="w-full rounded-lg border border-border bg-background p-3 text-sm" placeholder="Document assessment, plan, and instructions for this case" />
+        <div className="flex flex-wrap gap-3 items-center justify-between">
+          <select value={caseDisposition} onChange={(e) => setCaseDisposition(e.target.value as typeof caseDisposition)} className="rounded-lg border border-border bg-background p-2 text-sm">
+            <option value="handled">Handled</option><option value="follow_up_required">Follow-up required</option><option value="referred">Referred</option>
+          </select>
+          <Button type="submit" size="sm" disabled={isSavingCaseNote}>{isSavingCaseNote ? 'Saving…' : 'Save note and disposition'}</Button>
+        </div>
+      </form>}
+      {currentUser?.role === 'doctor' && clinicalHistory.length > 0 && <section className="border border-border rounded-xl p-4 space-y-3">
+        <h4 className="text-sm font-semibold">Clinical case history</h4>
+        {clinicalHistory.slice().reverse().map((entry) => <article key={entry.action_id} className="border-t border-border pt-2 text-sm">
+          <div className="flex justify-between gap-2"><span className="font-medium">{entry.disposition?.replaceAll('_', ' ') || entry.action_type}</span><time className="text-xs text-muted-foreground">{new Date(entry.timestamp * 1000).toLocaleString()}</time></div>
+          <p className="whitespace-pre-wrap mt-1">{entry.clinical_notes}</p>
+        </article>)}
+      </section>}
 
       {/* Prescribe Medication Modal */}
       {showPrescriptionModal && (
@@ -589,21 +667,21 @@ export function CaseViewPanel({
       {/* Reassign Modal */}
       {showReassignModal && (
         <div className="p-4 bg-muted/40 border border-border rounded-xl space-y-3">
-          <h4 className="text-xs font-bold text-foreground">Reassign Case (B5.6)</h4>
+          <h4 className="text-xs font-bold text-foreground">{currentUser?.role === 'nurse' ? 'Confirm doctor assignment' : 'Reassign Case (B5.6)'}</h4>
           <select
             value={targetDoctorId}
             onChange={(e) => setTargetDoctorId(e.target.value)}
             className="w-full bg-card border border-border rounded-lg p-2 text-xs text-foreground"
           >
             <option value="">Select target clinician...</option>
-            {doctorsRoster.map((doc) => (
+            {[...doctorsRoster].sort((a, b) => Number(Boolean(routingSuggestion?.eligible_doctors?.some((d: any) => d.id === b.id))) - Number(Boolean(routingSuggestion?.eligible_doctors?.some((d: any) => d.id === a.id)))).map((doc) => (
               <option key={doc.id || doc.email} value={doc.id || doc.email}>
-                {doc.full_name} ({doc.specialty || doc.department_code}) - {doc.languages?.join(', ')}
+                {routingSuggestion?.eligible_doctors?.some((d: any) => d.id === doc.id) ? 'Suggested: ' : ''}{doc.full_name} ({doc.specialty || doc.department_code}) - {doc.languages?.join(', ')}
               </option>
             ))}
           </select>
           <Input
-            placeholder="Mandatory clinical rationale for reassignment..."
+            placeholder={currentUser?.role === 'nurse' ? 'Why this doctor fits the symptoms (required)...' : 'Mandatory clinical rationale for reassignment...'}
             value={reassignReason}
             onChange={(e) => setReassignReason(e.target.value)}
             className="text-xs bg-card"

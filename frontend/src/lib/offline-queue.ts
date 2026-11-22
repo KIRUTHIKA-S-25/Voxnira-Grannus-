@@ -3,7 +3,7 @@
  * 
  * Supports ASHA workers and village sub-centres operating in zero-connectivity
  * zones by queuing intake payloads locally and automatically synchronizing
- * with retry backoff when connection is restored.
+ * in memory for the current page session and synchronizing when requested.
  */
 
 import { getAuthHeaders } from './api';
@@ -21,27 +21,20 @@ export interface OfflineConsultation {
     reported_duration?: string;
     known_conditions?: string;
     current_medications?: string;
-    dpdp_consent_verified: boolean;
+    consent_id: string;
   };
   retryCount: number;
   lastError?: string;
 }
 
-const STORAGE_KEY = 'grannus_offline_queue_v1';
+// Raw patient audio is never written to localStorage, IndexedDB, or sessionStorage.
+let offlineQueue: OfflineConsultation[] = [];
 
 export function getOfflineQueue(): OfflineConsultation[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch (e) {
-    console.error('Failed to read offline queue:', e);
-    return [];
-  }
+  return [...offlineQueue];
 }
 
 export function saveOfflineConsultation(payload: OfflineConsultation['payload']): string {
-  const queue = getOfflineQueue();
   const id = `offline_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const item: OfflineConsultation = {
     id,
@@ -49,22 +42,12 @@ export function saveOfflineConsultation(payload: OfflineConsultation['payload'])
     payload,
     retryCount: 0,
   };
-  queue.push(item);
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
-  } catch (e) {
-    console.error('Failed to save offline consultation:', e);
-  }
+  offlineQueue.push(item);
   return id;
 }
 
 export function removeOfflineConsultation(id: string) {
-  const queue = getOfflineQueue().filter((item) => item.id !== id);
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
-  } catch (e) {
-    console.error('Failed to update offline queue:', e);
-  }
+  offlineQueue = offlineQueue.filter((item) => item.id !== id);
 }
 
 export async function syncOfflineConsultations(
@@ -85,6 +68,7 @@ export async function syncOfflineConsultations(
 
       const formData = new FormData();
       formData.append('audio', audioBlob, 'patient_recording.wav');
+      formData.append('consent_id', item.payload.consent_id);
       formData.append('language_code', item.payload.language_code || 'unknown');
       formData.append('doctor_preferred_language', item.payload.doctor_preferred_language || 'en-IN');
       if (item.payload.age) formData.append('age', item.payload.age);
@@ -96,6 +80,7 @@ export async function syncOfflineConsultations(
       const response = await fetch(`${apiUrl}/api/v1/pipeline/process-audio`, {
         method: 'POST',
         headers: getAuthHeaders(),
+        credentials: 'include',
         body: formData,
       });
 
@@ -106,7 +91,7 @@ export async function syncOfflineConsultations(
       removeOfflineConsultation(item.id);
       successCount++;
     } catch (err: any) {
-      console.warn(`Sync failed for offline item ${item.id}:`, err);
+      console.warn(`Sync failed for offline item ${item.id} (${err instanceof Error ? err.name : 'unknown error'})`);
       item.retryCount += 1;
       item.lastError = err.message || 'Network error';
       failedCount++;

@@ -24,32 +24,32 @@ interface ConsentNotice {
 const CONSENT_NOTICES: Record<string, ConsentNotice> = {
   'en-IN': {
     title: 'Patient Consent & Privacy Notice (DPDP Act 2023)',
-    purpose: 'Your voice recording will be used strictly to generate an AI clinical triage summary and assist your doctor. It will NOT be used for commercial advertising.',
-    retention: 'Raw audio is automatically scheduled for permanent deletion within 72 hours. Medical summaries are retained securely for clinical follow-up.',
-    rights: 'You have the right to withdraw consent, request access, or delete your health records at any time by contacting our Data Protection Grievance Officer.',
+    purpose: 'Your audio is sent to Sarvam AI to transcribe your speech and support an AI clinical triage summary for your doctor. It is not used for advertising.',
+    retention: "The app does not persist a raw audio file after processing. Transcripts and clinical records may be retained for care and applicable obligations. Sarvam's data retention depends on the service agreement and account settings.",
+    rights: 'You may submit a request about your personal data to the designated Grievance Officer. Some clinical records may need to be retained.',
     emergency_disclaimer: 'Grannus is a decision support tool, NOT a definitive diagnosis. In medical emergencies, immediately call 108 or 112.',
     checkbox_label: 'I have understood the purpose and grant voluntary consent for voice recording under DPDP Act 2023.',
   },
   'ta-IN': {
     title: 'நோயாளி ஒப்புதல் மற்றும் தனியுரிமை அறிவிப்பு (DPDP சட்டம் 2023)',
-    purpose: 'உங்கள் குரல் பதிவு மருத்துவரின் ஆலோசனைக்காகவும் அவசர உதவி சுருக்கம் தயாரிப்பதற்காகவும் மட்டுமே பயன்படுத்தப்படும். விளம்பரங்களுக்கு பயன்படுத்தப்படாது.',
-    retention: 'குரல் பதிவு 72 மணி நேரத்திற்குள் தானாகவே நீக்கப்படும். மருத்துவ குறிப்புகள் பாதுகாப்பாக வைக்கப்படும்.',
+    purpose: 'உங்கள் குரல் உரைமாற்றம் செய்யவும், மருத்துவருக்கான AI மருத்துவச் சுருக்கத்தை உருவாக்கவும் Sarvam AI-க்கு அனுப்பப்படுகிறது. இது விளம்பரத்திற்குப் பயன்படுத்தப்படாது.',
+    retention: 'செயலாக்கத்திற்குப் பிறகு செயலி மூல ஒலிக் கோப்பைச் சேமிக்காது. உரைமாற்றமும் மருத்துவச் சுருக்கமும் பராமரிப்புக்காக வைக்கப்படலாம். Sarvam-இல் தரவு சேமிப்பு சேவை ஒப்பந்தம் மற்றும் கணக்கு அமைப்புகளைப் பொறுத்தது.',
     rights: 'உங்கள் மருத்துவ தரவுகளை நீக்கவோ அல்லது பார்வையிடவோ உங்களுக்கு முழு உரிமை உண்டு.',
     emergency_disclaimer: 'இது முடிவான சிகிச்சை அல்ல; மருத்துவ அவசரத்திற்கு உடனடியாக 108 அல்லது 112 ஐ அழைக்கவும்.',
     checkbox_label: 'நான் இந்த நோக்கத்தை புரிந்துகொண்டு குரல் பதிவு செய்ய முழு சம்மதம் தெரிவிக்கிறேன்.',
   },
   'hi-IN': {
     title: 'मरीज सहमति एवं गोपनीयता सूचना (DPDP अधिनियम 2023)',
-    purpose: 'आपकी आवाज की रिकॉर्डिंग का उपयोग केवल डॉक्टर के परामर्श और प्राथमिक चिकित्सा सारांश के लिए किया जाएगा।',
-    retention: 'ऑडियो रिकॉर्डिंग 72 घंटों के भीतर स्वतः हटा दी जाती है। मेडिकल सारांश सुरक्षित रखा जाता है।',
+    purpose: 'आपकी आवाज़ को लिखित रूप में बदलने और डॉक्टर के लिए AI चिकित्सा सारांश बनाने हेतु ऑडियो Sarvam AI को भेजा जाता है। इसका उपयोग विज्ञापन के लिए नहीं होता।',
+    retention: 'प्रक्रिया पूरी होने के बाद ऐप मूल ऑडियो फ़ाइल को सुरक्षित नहीं रखता। देखभाल के लिए प्रतिलेख और चिकित्सीय सारांश रखे जा सकते हैं। Sarvam में डेटा की अवधि सेवा अनुबंध और खाते की सेटिंग पर निर्भर करती है।',
     rights: 'आपको कभी भी अपना डेटा देखने या हटाने का अनुरोध करने का पूरा अधिकार है।',
     emergency_disclaimer: 'यह अंतिम निदान नहीं है। किसी भी आपात स्थिति में तुरंत 108 या 112 पर कॉल करें।',
     checkbox_label: 'मैंने सभी नियम समझ लिए हैं और आवाज रिकॉर्डिंग के लिए अपनी सहमति देता/देती हूँ।',
   },
   'te-IN': {
     title: 'రోగి సమ్మతి మరియు గోప్యతా నోటీసు (DPDP చట్టం 2023)',
-    purpose: 'మీ వాయిస్ రికార్డింగ్ డాక్టర్ సంప్రదింపుల కోసం మరియు అత్యవసర సారాంశం కోసం మాత్రమే ఉపయోగించబడుతుంది.',
-    retention: 'వాయిస్ రికార్డింగ్ 72 గంటల్లో స్వయంచాలకంగా తొలగించబడుతుంది.',
+    purpose: 'మీ మాటలను లిఖిత రూపంలోకి మార్చి, వైద్యుడికి AI వైద్య సారాంశాన్ని అందించడానికి మీ ఆడియోను Sarvam AIకు పంపుతాము. ఇది ప్రకటనల కోసం ఉపయోగించబడదు.',
+    retention: 'ప్రాసెసింగ్ తర్వాత యాప్ అసలు ఆడియో ఫైల్‌ను నిల్వ చేయదు. సంరక్షణ కోసం ట్రాన్స్‌క్రిప్ట్ మరియు వైద్య సారాంశం నిల్వ చేయబడవచ్చు. Sarvam వద్ద డేటా నిల్వ వ్యవధి సేవా ఒప్పందం మరియు ఖాతా సెట్టింగ్‌లపై ఆధారపడి ఉంటుంది.',
     rights: 'మీ డేటాను ఎప్పుడైనా తొలగించే హక్కు మీకు ఉంది.',
     emergency_disclaimer: 'ఇది తుది వైద్య నిర్ధారణ కాదు. అత్యవసర పరిస్థితుల్లో వెంటనే 108 లేదా 112 కు కాల్ చేయండి.',
     checkbox_label: 'నేను ప్రయోజనాన్ని అర్థం చేసుకున్నాను మరియు వాయిస్ రికార్డింగ్ కోసం నా సమ్మతిని తెలియజేస్తున్నాను.',
@@ -58,9 +58,11 @@ const CONSENT_NOTICES: Record<string, ConsentNotice> = {
 
 interface ConsentDialogProps {
   isOpen: boolean;
-  onConsentGiven: () => void;
+  onConsentGiven: () => void | Promise<void>;
   onConsentDenied: () => void;
   selectedLanguage?: string;
+  isSubmitting?: boolean;
+  error?: string | null;
 }
 
 export function ConsentDialog({
@@ -68,7 +70,10 @@ export function ConsentDialog({
   onConsentGiven,
   onConsentDenied,
   selectedLanguage = 'en-IN',
+  isSubmitting = false,
+  error,
 }: ConsentDialogProps) {
+  const grievanceOfficerEmail = process.env.NEXT_PUBLIC_GRIEVANCE_OFFICER_EMAIL?.trim();
   const [lang, setLang] = useState<string>(
     CONSENT_NOTICES[selectedLanguage] ? selectedLanguage : 'en-IN'
   );
@@ -83,7 +88,7 @@ export function ConsentDialog({
           <div className="flex items-center gap-2 text-primary mb-1">
             <ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
             <span className="text-xs uppercase tracking-wider font-semibold text-emerald-700 dark:text-emerald-400">
-              DPDP Act 2023 Statutory Compliance
+              Privacy and consent notice
             </span>
           </div>
           <DialogTitle className="text-xl font-heading font-semibold text-foreground">
@@ -130,7 +135,7 @@ export function ConsentDialog({
           <div className="p-3 bg-muted/40 rounded-lg border border-border/50 flex gap-3">
             <Clock className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
             <div>
-              <p className="font-medium text-xs text-foreground uppercase tracking-wide">72-Hour Data Retention</p>
+              <p className="font-medium text-xs text-foreground uppercase tracking-wide">Audio and record handling</p>
               <p className="text-xs text-muted-foreground mt-0.5">{notice.retention}</p>
             </div>
           </div>
@@ -150,7 +155,7 @@ export function ConsentDialog({
           <div className="text-xs text-muted-foreground px-1">
             <p><strong>Statutory Rights:</strong> {notice.rights}</p>
             <p className="mt-1 text-[11px] text-muted-foreground/80">
-              Grievance Officer: <code>grievance.officer@grannus.health</code> | Digital Personal Data Protection Act 2023 Section 6(1)
+              Grievance Officer: {grievanceOfficerEmail ? <code>{grievanceOfficerEmail}</code> : 'Contact your care provider for the designated contact.'}
             </p>
           </div>
         </div>
@@ -168,6 +173,7 @@ export function ConsentDialog({
               {notice.checkbox_label}
             </span>
           </label>
+          {error && <p role="alert" className="mt-2 text-xs text-destructive">{error}</p>}
         </div>
 
         <DialogFooter className="mt-4 gap-2 sm:gap-0">
@@ -176,12 +182,12 @@ export function ConsentDialog({
           </Button>
           <Button
             size="sm"
-            disabled={!isChecked}
+            disabled={!isChecked || isSubmitting}
             onClick={() => onConsentGiven()}
             className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
           >
             <CheckCircle2 className="w-4 h-4" />
-            Accept & Continue
+            {isSubmitting ? 'Saving consent…' : 'Accept & Continue'}
           </Button>
         </DialogFooter>
       </DialogContent>

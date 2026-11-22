@@ -50,6 +50,7 @@ export function usePipeline() {
 
   const processAudio = useCallback(async (params: {
     audio: Blob;
+    consent_id: string;
     language_code?: string;
     doctor_preferred_language?: string;
     age?: string;

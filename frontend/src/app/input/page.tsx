@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AudioRecorder } from '@/components/voice/audio-recorder';
 import { FileUploader } from '@/components/voice/file-uploader';
-import { SUPPORTED_LANGUAGES, getActiveProfile, PatientProfile, triggerEmergencySOS } from '@/lib/api';
+import { SUPPORTED_LANGUAGES, getActiveProfile, PatientProfile, recordPatientConsent, triggerEmergencySOS } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
@@ -22,8 +22,11 @@ export default function VoiceInputPage() {
   const [activeProfile, setActiveProfileState] = useState<PatientProfile | null>(null);
   
   // DPDP Consent state
-  const [showConsentModal, setShowConsentModal] = useState(false);
+  const [showConsentModal, setShowConsentModal] = useState(true);
   const [consentApproved, setConsentApproved] = useState(false);
+  const [consentId, setConsentId] = useState<string | null>(null);
+  const [isSavingConsent, setIsSavingConsent] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
 
   // Optional context
   const [showContext, setShowContext] = useState(false);
@@ -67,7 +70,7 @@ export default function VoiceInputPage() {
 
   const handleTriggerSOS = async () => {
     setIsSendingSOS(true);
-    setSosStatus('Acquiring location & alerting casualty dispatch...');
+    setSosStatus('Acquiring location & recording emergency alert...');
 
     let currentCoords = locationCoords;
     if (!currentCoords && typeof window !== 'undefined' && navigator.geolocation) {
@@ -91,7 +94,7 @@ export default function VoiceInputPage() {
         longitude: currentCoords?.longitude,
         patient_name: activeProfile?.full_name || 'Emergency Patient',
       });
-      setSosStatus(`SOS Dispatched! Ref #${resp.dispatch_id.slice(0, 8)}. Connecting to 108...`);
+      setSosStatus(`${resp.message} Reference #${resp.dispatch_id.slice(0, 8)}. Opening the 108 call screen...`);
       setTimeout(() => {
         window.location.href = 'tel:108';
       }, 700);
@@ -122,7 +125,7 @@ export default function VoiceInputPage() {
     }
   }, [router]);
 
-  const executePipelineSubmission = (blobToSubmit: Blob) => {
+  const executePipelineSubmission = (blobToSubmit: Blob, acceptedConsentId: string) => {
     const payload = {
       audio: blobToSubmit,
       language_code: language,
@@ -136,7 +139,7 @@ export default function VoiceInputPage() {
       patient_name: activeProfile?.full_name,
       latitude: locationCoords?.latitude,
       longitude: locationCoords?.longitude,
-      dpdp_consent_verified: true,
+      consent_id: acceptedConsentId,
     };
 
     setPipelinePayload(payload);
@@ -149,14 +152,27 @@ export default function VoiceInputPage() {
       setShowConsentModal(true);
       return;
     }
-    executePipelineSubmission(audioBlob);
+    if (consentId) executePipelineSubmission(audioBlob, consentId);
+    else setShowConsentModal(true);
   };
 
-  const handleConsentAffirmed = () => {
-    setConsentApproved(true);
-    setShowConsentModal(false);
-    if (audioBlob) {
-      executePipelineSubmission(audioBlob);
+  const handleConsentAffirmed = async () => {
+    if (isSavingConsent) return;
+    setIsSavingConsent(true);
+    setConsentError(null);
+    try {
+      const recorded = await recordPatientConsent({
+        language_code: language === 'unknown' ? (activeProfile?.preferred_language || 'en-IN') : language,
+        profile_id: activeProfile?.id,
+      });
+      setConsentId(recorded.consent_id);
+      setConsentApproved(true);
+      setShowConsentModal(false);
+      if (audioBlob) executePipelineSubmission(audioBlob, recorded.consent_id);
+    } catch (error) {
+      setConsentError(error instanceof Error ? error.message : 'We could not save your consent. Please try again.');
+    } finally {
+      setIsSavingConsent(false);
     }
   };
 
@@ -169,7 +185,7 @@ export default function VoiceInputPage() {
         <p className="text-muted-foreground text-lg">Record or upload a patient consultation audio</p>
       </div>
 
-      {/* Emergency SOS Banner (Zero-Latency Triage with GPS Location Dispatch) */}
+      {/* Emergency SOS support banner with optional GPS sharing */}
       <div className="mb-8 p-4 bg-red-500/10 border-2 border-red-500/30 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm animate-gentle-fade-in">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-red-600 text-white flex items-center justify-center font-bold text-sm shrink-0 animate-pulse">
@@ -178,7 +194,7 @@ export default function VoiceInputPage() {
           <div>
             <h3 className="text-sm font-bold text-red-900 dark:text-red-200">Severe Medical Emergency?</h3>
             <p className="text-xs text-red-700 dark:text-red-300">
-              Chest pain, choking, severe bleeding, or unconsciousness? Do not record audio. Dispatch immediate emergency alert with your live GPS location.
+              Chest pain, choking, severe bleeding, or unconsciousness? Do not record audio. Call 108 or 112 now. This app records an alert but cannot dispatch an ambulance.
             </p>
             {sosStatus && (
               <p className="text-xs font-semibold text-red-800 dark:text-red-200 mt-1 animate-pulse">
@@ -195,7 +211,7 @@ export default function VoiceInputPage() {
             className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2.5 min-h-[44px] rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-md transition-colors active:scale-95 cursor-pointer disabled:opacity-75"
           >
             <PhoneCall className="w-3.5 h-3.5" />
-            <span>{isSendingSOS ? 'Transmitting GPS...' : 'Broadcast SOS & Call 108'}</span>
+            <span>{isSendingSOS ? 'Recording alert...' : 'Record SOS & Call 108'}</span>
           </button>
           <a
             href="tel:112"
@@ -254,12 +270,21 @@ export default function VoiceInputPage() {
             <TabsTrigger value="upload" className="rounded-full text-base data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md transition-all">Upload</TabsTrigger>
           </TabsList>
           
-          <TabsContent value="record" className="mt-0 focus-visible:outline-none focus-visible:ring-0">
-            <AudioRecorder onAudioReady={setAudioBlob} />
-          </TabsContent>
-          <TabsContent value="upload" className="mt-0 focus-visible:outline-none focus-visible:ring-0">
-            <FileUploader onAudioReady={setAudioBlob} />
-          </TabsContent>
+          {consentApproved ? (
+            <>
+              <TabsContent value="record" className="mt-0 focus-visible:outline-none focus-visible:ring-0">
+                <AudioRecorder onAudioReady={setAudioBlob} />
+              </TabsContent>
+              <TabsContent value="upload" className="mt-0 focus-visible:outline-none focus-visible:ring-0">
+                <FileUploader onAudioReady={setAudioBlob} />
+              </TabsContent>
+            </>
+          ) : (
+            <div className="rounded-xl border border-border bg-muted/30 p-8 text-center">
+              <p className="mb-4 text-sm text-muted-foreground">Review and accept the privacy notice before recording or uploading patient audio.</p>
+              <Button type="button" onClick={() => setShowConsentModal(true)}>Review privacy notice</Button>
+            </div>
+          )}
         </Tabs>
       </div>
 
@@ -270,7 +295,7 @@ export default function VoiceInputPage() {
           <div className="space-y-3">
             <Label className="text-sm font-medium text-foreground">Patient Language</Label>
             <Select value={language} onValueChange={(val) => setLanguage(val || 'unknown')}>
-              <SelectTrigger className="w-full bg-background rounded-lg border-border h-11 focus:ring-primary">
+              <SelectTrigger className="w-full bg-background rounded-lg border-border h-11 focus:ring-primary" disabled={!consentApproved}>
                 <SelectValue placeholder="Select language" />
               </SelectTrigger>
               <SelectContent>
@@ -387,7 +412,7 @@ export default function VoiceInputPage() {
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-border">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-            <span>Privacy-First Architecture • 72h Audio Retention • 108/112 Emergency Referral</span>
+            <span>Audio sent for transcription • Clinical records may be retained • Emergency 108/112</span>
           </div>
 
           <Button 
@@ -402,10 +427,13 @@ export default function VoiceInputPage() {
       </div>
 
       <ConsentDialog
+        key={language}
         isOpen={showConsentModal}
         selectedLanguage={language}
+        isSubmitting={isSavingConsent}
+        error={consentError}
         onConsentGiven={handleConsentAffirmed}
-        onConsentDenied={() => setShowConsentModal(false)}
+        onConsentDenied={() => { setConsentError(null); setShowConsentModal(false); }}
       />
     </div>
   );

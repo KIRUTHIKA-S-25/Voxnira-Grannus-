@@ -7,7 +7,7 @@ import { PriorityFilter } from '@/components/dashboard/priority-filter';
 import { CaseViewPanel } from '@/components/dashboard/case-view-panel';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { toggleDoctorAvailability, getDoctorRoster } from '@/lib/api';
+import { toggleDoctorAvailability, getDoctorRoster, getAdminOperationalCases } from '@/lib/api';
 import {
   Search,
   Plus,
@@ -43,6 +43,9 @@ export default function DashboardPage() {
   const [currentUser, setCurrentUser] = useState<any | null>(null);
   const [isOnDuty, setIsOnDuty] = useState<boolean>(true);
   const [doctorsRoster, setDoctorsRoster] = useState<any[]>([]);
+  const [adminCases, setAdminCases] = useState<any[]>([]);
+  const [adminSearch, setAdminSearch] = useState('');
+  const [adminError, setAdminError] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -95,6 +98,11 @@ export default function DashboardPage() {
       }
     }
   }, [consultations]);
+
+  useEffect(() => {
+    if (currentUser?.role !== 'admin') return;
+    getAdminOperationalCases(adminSearch).then((result) => { setAdminCases(result.cases || []); setAdminError(null); }).catch((err) => setAdminError(err.message));
+  }, [currentUser, adminSearch]);
 
   const handleLogout = () => {
     localStorage.removeItem('grannus_auth_token');
@@ -161,6 +169,22 @@ export default function DashboardPage() {
     );
   }
 
+  if (currentUser?.role === 'admin') {
+    return <div className="container mx-auto px-4 py-8 max-w-7xl">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-5 mb-6">
+        <div><h1 className="text-2xl font-semibold">Operational Case Review</h1><p className="text-sm text-muted-foreground mt-1">Patient identity, assignment, case status, timestamps, and patient feedback. Clinical transcripts and notes are restricted.</p></div>
+        <Button variant="outline" onClick={handleLogout}><LogOut className="w-4 h-4 mr-2" />Sign out</Button>
+      </div>
+      <div className="mb-5"><Input value={adminSearch} onChange={(e) => setAdminSearch(e.target.value)} placeholder="Search patient, case, doctor, status…" className="max-w-lg" /></div>
+      {adminError && <p role="alert" className="mb-4 text-sm text-destructive">{adminError}</p>}
+      <div className="space-y-4">{adminCases.map((item) => <article key={item.id} className="rounded-xl border border-border bg-card p-4 space-y-3">
+        <div className="flex flex-wrap justify-between gap-2"><div><h2 className="font-semibold">{item.patient_name}</h2><p className="text-xs text-muted-foreground">Case {item.id} · Patient ID {item.patient_id || 'Not linked'}</p></div><span className="text-xs rounded-full bg-muted px-3 py-1">{item.urgency_tier || 'Untriaged'} · {item.status || 'Unknown status'}</span></div>
+        <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4"><div><span className="text-muted-foreground">Assigned doctor</span><p>{item.assigned_doctor || 'Unassigned'}</p></div><div><span className="text-muted-foreground">Department</span><p>{item.department_id || 'Unassigned'}</p></div><div><span className="text-muted-foreground">Created</span><p>{item.created_at ? new Date(item.created_at).toLocaleString() : 'Unknown'}</p></div><div><span className="text-muted-foreground">Updated</span><p>{item.updated_at ? new Date(item.updated_at).toLocaleString() : 'Unknown'}</p></div></div>
+        <div className="border-t border-border pt-3"><h3 className="text-sm font-semibold">Patient feedback</h3>{item.feedback?.length ? item.feedback.map((f: any, i: number) => <p key={i} className="text-sm mt-1">{f.patient_status || 'Status not recorded'}{f.patient_feedback ? ` — ${f.patient_feedback}` : ''}{f.checked_in_at ? ` · ${new Date(f.checked_in_at).toLocaleString()}` : ''}</p>) : <p className="text-sm text-muted-foreground mt-1">No feedback recorded.</p>}</div>
+      </article>)}{adminCases.length === 0 && <p className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">No operational cases match this search.</p>}</div>
+    </div>;
+  }
+
   return (
     <div className="container mx-auto px-4 py-8 max-w-7xl animate-gentle-fade-in">
       {/* Top Header Bar */}
@@ -168,7 +192,7 @@ export default function DashboardPage() {
         <div>
           <div className="flex items-center gap-3 flex-wrap">
             <h1 className="text-2xl md:text-3xl font-heading font-medium text-foreground">
-              Doctor Consultation Queue
+              {currentUser?.role === 'nurse' ? 'Nurse Case Routing Queue' : 'Doctor Consultation Queue'}
             </h1>
             {currentUser?.full_name ? (
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
