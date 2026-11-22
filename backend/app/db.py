@@ -1624,9 +1624,10 @@ def save_pipeline_job(job_id: str, job_data: dict) -> dict:
             client.table("pipeline_jobs").upsert(db_record).execute()
         except Exception as exc:
             # If the remote database has not yet applied the durable queue migration,
-            # retry without newly added payload columns so core job progress is still preserved.
+            # retry with only known columns in progressive fallbacks so core job progress is still preserved.
             if "column" in str(exc).lower() or "pgrst204" in str(exc).lower():
                 try:
+                    # Level 1 fallback: exclude unapplied durable audio columns but keep guest_case_id if available
                     fallback_record = {
                         k: db_record[k]
                         for k in (
@@ -1634,11 +1635,27 @@ def save_pipeline_job(job_id: str, job_data: dict) -> dict:
                             "status", "stage", "progress", "message", "result", "error_message",
                             "created_at", "updated_at",
                         )
-                        if k in db_record
+                        if k in db_record and db_record[k] is not None
                     }
                     client.table("pipeline_jobs").upsert(fallback_record).execute()
                 except Exception as inner_exc:
-                    _handle_database_error("save_pipeline_job", inner_exc)
+                    # Level 2 fallback: base pipeline_jobs table without guest_case_id
+                    if "column" in str(inner_exc).lower() or "pgrst204" in str(inner_exc).lower():
+                        try:
+                            base_record = {
+                                k: fallback_record[k]
+                                for k in (
+                                    "id", "hospital_id", "account_id", "profile_id",
+                                    "status", "stage", "progress", "message", "result", "error_message",
+                                    "created_at", "updated_at",
+                                )
+                                if k in fallback_record
+                            }
+                            client.table("pipeline_jobs").upsert(base_record).execute()
+                        except Exception as base_exc:
+                            _handle_database_error("save_pipeline_job", base_exc)
+                    else:
+                        _handle_database_error("save_pipeline_job", inner_exc)
             else:
                 _handle_database_error("save_pipeline_job", exc)
 
@@ -1756,7 +1773,18 @@ def save_follow_up_record(follow_up_id: str, data: dict) -> dict:
                 _encode_text_fields(record, ("patient_status", "patient_feedback"))
             ).execute()
         except Exception as exc:
-            _handle_database_error("save_follow_up", exc)
+            # If consultation is still asynchronously saving (foreign key 23503), retry after a brief delay
+            if "23503" in str(exc) or "foreign key" in str(exc).lower():
+                import time
+                time.sleep(0.5)
+                try:
+                    client.table("persistent_follow_ups").upsert(
+                        _encode_text_fields(record, ("patient_status", "patient_feedback"))
+                    ).execute()
+                except Exception as retry_exc:
+                    _handle_database_error("save_follow_up", retry_exc)
+            else:
+                _handle_database_error("save_follow_up", exc)
 
     _MEM_FOLLOW_UPS[follow_up_id] = record
     return record
