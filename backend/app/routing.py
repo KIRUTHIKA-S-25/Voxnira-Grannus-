@@ -353,7 +353,13 @@ def route_consultation(
       3. Match on-duty doctor who speaks patient's language with lowest caseload.
       4. Fall back to department -> General Medicine -> Duty Doctor.
     """
-    from app.db import get_staff_doctors, save_consultation, save_assignment, append_audit_log_entry
+    from app.db import (
+        get_staff_doctors,
+        get_default_hospital_id,
+        save_consultation,
+        save_assignment,
+        append_audit_log_entry,
+    )
 
     urgency_tier = consultation_data.get("urgency_tier", "doctor_soon")
     patient_lang = consultation_data.get("patient_language", "en-IN")
@@ -376,7 +382,7 @@ def route_consultation(
         consultation_data["assigned_doctor_id"] = None
         save_consultation(cid, consultation_data)
         append_audit_log_entry(
-            action="EMERGENCY_ER_ALERT_DISPATCHED",
+            action="EMERGENCY_CASE_PRIORITIZED",
             user_id="system_router",
             role="system",
             resource_id=cid,
@@ -389,7 +395,8 @@ def route_consultation(
         return consultation_data
 
     # Roster match for doctor_today / doctor_soon
-    doctors = get_staff_doctors()
+    hospital_id = consultation_data.get("hospital_id") or get_default_hospital_id()
+    doctors = get_staff_doctors(hospital_id=hospital_id)
     best_doc, match_reason = select_best_doctor(doctors, dept_code, patient_lang)
 
     if best_doc:

@@ -32,7 +32,8 @@ Enforce on the **server** with role, `hospital_id`, and ownership checks on ever
 
 | Role | Can see | Cannot see |
 |---|---|---|
-| **Patient** (phone OTP) | Only profiles under their verified number (self and family): reports, doctor replies, history, check-ins | Other numbers' data; any doctor, nurse, or admin screen |
+| **Patient** (phone + PIN) | Only profiles under their account (self and family): reports, doctor replies, history, check-ins | Other numbers' data; any doctor, nurse, or admin screen |
+
 | **Emergency guest** (name only) | Only the one case they created | History, profile lists, any other case |
 | **Doctor** | Cases assigned to them, their own replies, triage details, and patient details attached to those cases. Unclaimed cases in their department show only complaint, tier, age, gender. | Other doctors' cases, the full phone number, the whole account |
 | **Nurse** | Queue metadata for their hospital | Reply content they did not write |
@@ -48,8 +49,8 @@ Enforce on the **server** with role, `hospital_id`, and ownership checks on ever
 | `JWT_SECRET_KEY` | Token signing. The app must refuse to start without it. |
 | `SUPABASE_URL` | Database URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | **Server only.** Never exposed to the frontend. |
-| `SMS_PROVIDER` | `twilio_verify`, `msg91`, or `supabase` |
-| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID` | If using Twilio Verify |
+
+
 | `SARVAM_API_KEY`, `GEMINI_API_KEY` | AI services |
 | `AUDIO_RETENTION_HOURS` | Default `24` |
 | `ALLOW_DEV_OTP` | Default `false`. Never `true` in staging or production. |
@@ -66,9 +67,10 @@ In production the app must **fail to start** if the database, JWT secret, or SMS
 - [ ] In `main.py` `/auth/login`, remove the "user_id plus role" path. Only existing staff accounts with a correct email and password can log in.
 - [ ] Staff accounts are created by an admin. Doctors have a registration number verified by the admin, not by a regex.
 
-### H1.2 Real phone OTP (patients)
+### H1.2 Phone + PIN sign-in (patients)
+
 - [ ] **Delete `dev_otp_hint` from the API response completely.** OTPs never appear in any response, log, or error.
-- [ ] Add an `SmsProvider` interface with implementations for Twilio Verify (default) and MSG91. Check current India SMS and DLT requirements with the provider.
+
 - [ ] Flow: enter phone, SMS arrives, enter the code, tap **Verify**, then the dashboard.
 - [ ] Codes: 6 digits, 5-minute expiry, single use. If the provider doesn't verify for you, store a per-OTP random salted hash (not a fixed salt).
 - [ ] Limits: 5 attempts per code, 30-second resend cooldown, per-number and per-IP rate limits, and a daily SMS cap to prevent SMS-pumping abuse.
@@ -249,7 +251,8 @@ Apply the access matrix to **every** route. Write one shared dependency (`requir
 
 ## Decisions needed from you
 
-1. **SMS provider:** Twilio Verify (recommended default), MSG91, or Supabase phone auth.
+1. **SMS:** Outbound SMS is disabled; patient sign-in uses PIN.
+
 2. **Hospital's triage rules:** does the target hospital have its own department list and triage protocol? Use theirs if so.
 3. **Clinical calls:** pregnancy bleeding tier, and the tier for failed extraction (H5.3 and H5.4). A licensed clinician should decide.
 4. **Retention of text:** how long transcripts are kept before deletion (the policy for text, since audio is 24 hours).

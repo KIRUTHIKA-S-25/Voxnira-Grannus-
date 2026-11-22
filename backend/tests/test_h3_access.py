@@ -114,6 +114,13 @@ def test_h3_role_data_masking():
         "chief_complaint": "Severe acute chest pain",
         "urgency_tier": "emergency",
     })
+    save_assignment(
+        consultation_id=case_id,
+        doctor_id="doc_test",
+        assigned_by="nurse_test",
+        status="assigned",
+        reassignment_reason="Assigned for evaluation",
+    )
 
     # Doctor view: phone number is masked
     res_doc = client.get(f"/api/v1/consultations/{case_id}", headers={"Authorization": f"Bearer {doc_token}"})

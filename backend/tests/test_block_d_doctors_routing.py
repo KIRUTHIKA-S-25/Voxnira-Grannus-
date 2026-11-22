@@ -260,9 +260,26 @@ def test_f3_doctor_availability_toggle(doctor_rajan_token):
 
 def test_f3_doctor_queue_urgent_first_ordering(doctor_rajan_token):
     """F3.2: Consultation queue sorted urgent-first (emergency > doctor_today > doctor_soon > self_care)."""
-    save_consultation("queue-case-self-care", {"urgency_tier": "self_care", "status": "triage"})
-    save_consultation("queue-case-emergency", {"urgency_tier": "emergency", "status": "triage"})
-    save_consultation("queue-case-today", {"urgency_tier": "doctor_today", "status": "triage"})
+    from app.db import save_assignment
+    doc_id = "11111111-0001-0000-0000-000000000001"
+    for case_id, tier in [
+        ("queue-case-self-care", "self_care"),
+        ("queue-case-emergency", "emergency"),
+        ("queue-case-today", "doctor_today"),
+    ]:
+        save_consultation(case_id, {
+            "id": case_id,
+            "urgency_tier": tier,
+            "status": "triage",
+            "assigned_doctor_id": doc_id,
+        })
+        save_assignment(
+            consultation_id=case_id,
+            doctor_id=doc_id,
+            assigned_by="system",
+            status="assigned",
+            reassignment_reason="Queue order test",
+        )
 
     resp = client.get(
         "/api/v1/doctor/queue",

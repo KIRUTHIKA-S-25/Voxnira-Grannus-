@@ -10,6 +10,7 @@ import asyncio
 import time
 import uuid
 import logging
+from datetime import datetime
 from enum import Enum
 from typing import Dict, Optional, Any
 from pydantic import BaseModel, Field
@@ -44,8 +45,10 @@ class JobProgressResponse(BaseModel):
 
 
 class JobRecord:
-    def __init__(self, job_id: str):
+    def __init__(self, job_id: str, account_id: Optional[str] = None, guest_case_id: Optional[str] = None):
         self.job_id = job_id
+        self.account_id = account_id
+        self.guest_case_id = guest_case_id
         self.status = JobStatus.QUEUED
         self.progress_pct = 0
         self.current_stage = "Job queued for processing"
@@ -65,11 +68,18 @@ class JobRecord:
                 "status": status.value,
                 "stage": stage_desc,
                 "progress": progress_pct,
+                "account_id": self.account_id,
+                "guest_case_id": self.guest_case_id,
+                "created_at": self.created_at,
                 "result": (self.result.model_dump() if hasattr(self.result, "model_dump") else self.result.dict()) if self.result else None,
                 "error_message": self.error,
             })
-        except Exception:
-            pass
+        except Exception as exc:
+            from app.config import get_settings
+            if get_settings().is_production:
+                logger.error("Could not persist pipeline job stage (%s)", type(exc).__name__)
+                raise RuntimeError("Pipeline job state could not be persisted.") from exc
+            logger.warning("Could not persist pipeline job stage (%s)", type(exc).__name__)
 
     def to_response(self) -> JobProgressResponse:
         return JobProgressResponse(
@@ -89,8 +99,18 @@ class JobManager:
         self._jobs: Dict[str, JobRecord] = {}
         self._idempotency_keys: Dict[str, str] = {}
 
-    def create_job(self, idempotency_key: Optional[str] = None) -> str:
-        """Create a new job record or return active job matching idempotency_key."""
+    def create_job(
+        self,
+        idempotency_key: Optional[str] = None,
+        account_id: Optional[str] = None,
+        guest_case_id: Optional[str] = None,
+        audio_bytes: Optional[bytes] = None,
+        filename: Optional[str] = None,
+        language_code: Optional[str] = None,
+        patient_context: Optional[dict] = None,
+        doctor_preferred_language: Optional[str] = None,
+    ) -> str:
+        """Create a new job record with durable recovery metadata or return active job matching idempotency_key."""
         if idempotency_key and idempotency_key in self._idempotency_keys:
             existing_job_id = self._idempotency_keys[idempotency_key]
             existing_job = self.get_job(existing_job_id)
@@ -98,19 +118,41 @@ class JobManager:
                 return existing_job_id
 
         job_id = f"job_{uuid.uuid4().hex[:12]}"
-        rec = JobRecord(job_id)
+        rec = JobRecord(job_id, account_id=account_id, guest_case_id=guest_case_id)
         self._jobs[job_id] = rec
         if idempotency_key:
             self._idempotency_keys[idempotency_key] = job_id
         try:
             from app.db import save_pipeline_job
+            import base64
+            from app.security.phi_protection import encrypt_phi_field
+            enc_audio = None
+            if audio_bytes:
+                b64 = base64.b64encode(audio_bytes).decode("ascii")
+                enc_audio = encrypt_phi_field(b64)
+
             save_pipeline_job(job_id, {
                 "status": rec.status.value,
                 "stage": rec.current_stage,
                 "progress": rec.progress_pct,
+                "account_id": rec.account_id,
+                "guest_case_id": rec.guest_case_id,
+                "created_at": rec.created_at,
+                "encrypted_audio_payload": enc_audio,
+                "audio_filename": filename,
+                "language_code": language_code,
+                "patient_context": patient_context,
+                "doctor_preferred_language": doctor_preferred_language,
             })
-        except Exception:
-            pass
+        except Exception as exc:
+            from app.config import get_settings
+            self._jobs.pop(job_id, None)
+            if idempotency_key and self._idempotency_keys.get(idempotency_key) == job_id:
+                self._idempotency_keys.pop(idempotency_key, None)
+            if get_settings().is_production:
+                logger.error("Could not persist new pipeline job (%s)", type(exc).__name__)
+                raise RuntimeError("Pipeline job could not be persisted.") from exc
+            logger.warning("Could not persist new pipeline job (%s)", type(exc).__name__)
         return job_id
 
     def get_job_by_idempotency_key(self, idempotency_key: str) -> Optional[JobRecord]:
@@ -122,21 +164,42 @@ class JobManager:
         return None
 
     def get_job(self, job_id: str) -> Optional[JobRecord]:
-        if job_id in self._jobs:
-            return self._jobs[job_id]
         try:
             from app.db import get_pipeline_job
             data = get_pipeline_job(job_id)
             if data:
-                rec = JobRecord(job_id)
+                rec = JobRecord(
+                    job_id,
+                    account_id=data.get("account_id"),
+                    guest_case_id=data.get("guest_case_id"),
+                )
                 rec.status = JobStatus(data.get("status", "QUEUED"))
                 rec.progress_pct = data.get("progress", 0)
                 rec.current_stage = data.get("stage", "")
+                result = data.get("result")
+                if result:
+                    rec.result = PipelineResult.model_validate(result)
+                rec.error = data.get("error_message")
+                created_at = data.get("created_at")
+                if isinstance(created_at, str):
+                    rec.created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00")).timestamp()
+                elif isinstance(created_at, (int, float)):
+                    rec.created_at = float(created_at)
+                updated_at = data.get("updated_at")
+                if isinstance(updated_at, str):
+                    rec.updated_at = datetime.fromisoformat(updated_at.replace("Z", "+00:00")).timestamp()
                 self._jobs[job_id] = rec
                 return rec
-        except Exception:
-            pass
-        return None
+        except Exception as exc:
+            from app.config import get_settings
+            if get_settings().is_production:
+                logger.error("Could not load persisted pipeline job (%s)", type(exc).__name__)
+                raise RuntimeError("Pipeline job state is temporarily unavailable.") from exc
+            logger.warning("Could not load persisted pipeline job (%s)", type(exc).__name__)
+        # The cache is only a fallback for development/test mode. In a multi-worker
+        # deployment, always prefer the database row so each worker sees the latest
+        # status written by whichever worker owns the job.
+        return self._jobs.get(job_id)
 
     async def execute_job(
         self,
@@ -174,12 +237,13 @@ class JobManager:
             )
 
             job.result = result
-            job.update_stage(JobStatus.COMPLETED, 100, "Consultation triage complete")
 
             # Route by complaint category and assign to best on-duty doctor (B5.3, B5.8)
+            consultation_saved = False
             try:
-                from app.routing import categorize_complaint, select_best_doctor
-                from app.db import save_consultation, save_assignment, get_staff_doctors
+                from app.routing import categorize_complaint
+                from app.db import save_consultation, get_default_hospital
+                from app.specialty_validation import evaluate_specialty_holdout
 
                 complaint_cat, dept_code, routing_rationale = categorize_complaint(
                     clinical_summary=result.clinical_summary,
@@ -189,32 +253,13 @@ class JobManager:
                 )
 
                 from app.routing import DEPARTMENT_CODES
-                from app.db import _MEM_HOSPITALS
-                all_doctors = get_staff_doctors()
-                assigned_doc, doc_selection_rationale = select_best_doctor(
-                    doctors=all_doctors,
-                    department_code=dept_code,
-                    patient_language=result.patient_input.language,
-                )
-                assigned_doc_id = assigned_doc.get("id") if assigned_doc else None
-
-                hosp = _MEM_HOSPITALS[0]
+                hosp = get_default_hospital()
+                specialty_gate = evaluate_specialty_holdout()
+                if not specialty_gate["enabled"]:
+                    dept_code = None
+                doc_selection_rationale = "No clinician-labeled specialty holdout has passed 90%; nurse confirmation is required."
+                assigned_doc_id = None
                 doc_dict = None
-                if assigned_doc:
-                    doc_dict = {
-                        "id": assigned_doc.get("id"),
-                        "full_name": assigned_doc.get("full_name"),
-                        "specialty": assigned_doc.get("specialty"),
-                        "qualifications": assigned_doc.get("qualifications", "MBBS, MD"),
-                        "registration_number": assigned_doc.get("doctor_registration_number"),
-                        "state_council": assigned_doc.get("state_council"),
-                        "department_code": assigned_doc.get("department_code") or dept_code,
-                        "department_name": DEPARTMENT_CODES.get(dept_code, dept_code),
-                        "opd_room": assigned_doc.get("opd_room", "Room 101, Ground Floor OPD Block"),
-                        "schedule": assigned_doc.get("weekly_schedule"),
-                        "experience": assigned_doc.get("experience", "12 Years Clinical Practice"),
-                        "languages": assigned_doc.get("languages", ["English"]),
-                    }
 
                 hosp_dict = {
                     "name": hosp.get("name"),
@@ -232,14 +277,14 @@ class JobManager:
 
                 dept_dict = {
                     "code": dept_code,
-                    "name": DEPARTMENT_CODES.get(dept_code, dept_code),
+                    "name": DEPARTMENT_CODES.get(dept_code, "Manual nurse routing required") if dept_code else "Manual nurse routing required",
                     "category": complaint_cat,
                     "rationale": routing_rationale,
                     "doctor_selection_rationale": doc_selection_rationale,
                 }
 
                 wait_mins = 0 if result.priority.urgency_tier == "emergency" else (15 if result.priority.urgency_tier == "doctor_today" else 30)
-                token_prefix = dept_code[:3].upper()
+                token_prefix = dept_code[:3].upper() if dept_code else "TRI"
                 routing_dict = {
                     "token": f"OPD-{token_prefix}-{result.request_id[-4:].upper()}",
                     "estimated_wait_minutes": wait_mins,
@@ -253,6 +298,7 @@ class JobManager:
 
                 stated_name = getattr(result.clinical_summary, "stated_patient_name", None) if result.clinical_summary else None
                 save_consultation(result.request_id, {
+                    "hospital_id": hosp["id"],
                     "account_id": patient_context.get("account_id"),
                     "profile_id": patient_context.get("profile_id"),
                     "patient_name": patient_context.get("patient_name") or stated_name,
@@ -277,18 +323,13 @@ class JobManager:
                     "latitude": patient_context.get("latitude"),
                     "longitude": patient_context.get("longitude"),
                 })
+                consultation_saved = True
 
-                if assigned_doc_id:
-                    save_assignment(
-                        consultation_id=result.request_id,
-                        doctor_id=assigned_doc_id,
-                        assigned_by="system_routing",
-                        status="assigned",
-                        reassignment_reason=f"{routing_rationale} {doc_selection_rationale}",
-                        locked_by_name=assigned_doc.get("full_name"),
-                    )
             except Exception as route_err:
-                logger.warning("Routing failed for async job %s: %s", job_id, route_err)
+                if not consultation_saved:
+                    raise RuntimeError("Triage result could not be saved for clinician review.") from route_err
+                logger.warning("Doctor assignment failed for async job %s; saved case requires manual follow-up (%s)",
+                               job_id, type(route_err).__name__)
 
             # Register for follow-up tracking
             try:
@@ -310,13 +351,71 @@ class JobManager:
                 details={"job_id": job_id, "priority": result.priority.level.value},
             )
 
+            job.update_stage(JobStatus.COMPLETED, 100, "Consultation triage complete")
+
+            # Zero-out encrypted audio payload upon completion to avoid keeping raw audio (A4/Privacy)
+            try:
+                from app.db import save_pipeline_job
+                save_pipeline_job(job_id, {
+                    "status": JobStatus.COMPLETED.value,
+                    "stage": "Consultation triage complete",
+                    "progress": 100,
+                    "account_id": job.account_id,
+                    "guest_case_id": job.guest_case_id,
+                    "created_at": job.created_at,
+                    "result": (job.result.model_dump() if hasattr(job.result, "model_dump") else job.result.dict()) if job.result else None,
+                    "encrypted_audio_payload": None,
+                })
+            except Exception as clear_err:
+                logger.warning("Failed to clear audio payload after completion (%s)", type(clear_err).__name__)
+
         except Exception as exc:
             logger.exception("Async job %s failed", job_id)
             job.status = JobStatus.FAILED
             job.error = str(exc)
-            job.current_stage = f"Processing failed: {exc}"
+            job.current_stage = "Processing failed"
             job.updated_at = time.time()
             get_metrics().record_error("AsyncJobFailure")
+            try:
+                job.update_stage(JobStatus.FAILED, job.progress_pct, job.current_stage)
+            except Exception as persist_exc:
+                logger.error("Could not persist failed pipeline job (%s)", type(persist_exc).__name__)
+
+    async def recover_pending_jobs(self):
+        """Recover in-flight jobs on worker startup across process boundaries."""
+        try:
+            from app.db import list_recoverable_pipeline_jobs
+            import base64
+            from app.security.phi_protection import decrypt_phi_field
+
+            jobs = list_recoverable_pipeline_jobs()
+            for j in jobs:
+                jid = j.get("id")
+                enc_audio = j.get("encrypted_audio_payload")
+                if not enc_audio:
+                    continue
+                try:
+                    decrypted_b64 = decrypt_phi_field(enc_audio)
+                    audio_bytes = base64.b64decode(decrypted_b64)
+                    filename = j.get("audio_filename") or "recovered_audio.wav"
+                    language_code = j.get("language_code") or "unknown"
+                    patient_context = j.get("patient_context") or {}
+                    doctor_lang = j.get("doctor_preferred_language") or "en-IN"
+                    logger.info("Recovering in-flight pipeline job %s across workers", jid)
+                    asyncio.create_task(
+                        self.execute_job(
+                            job_id=jid,
+                            audio_bytes=audio_bytes,
+                            filename=filename,
+                            language_code=language_code,
+                            patient_context=patient_context,
+                            doctor_preferred_language=doctor_lang,
+                        )
+                    )
+                except Exception as rec_err:
+                    logger.warning("Could not recover job %s: %s", jid, rec_err)
+        except Exception as exc:
+            logger.warning("Job recovery sweep failed (%s)", type(exc).__name__)
 
     def cleanup_old_jobs(self, ttl_seconds: int = 86400):
         """Purge jobs older than 24 hours."""

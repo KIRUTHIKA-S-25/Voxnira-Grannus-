@@ -308,27 +308,8 @@ class FollowUpManager:
         return prompts
 
     def dispatch_due_check_in_notifications(self) -> int:
-        """
-        Simulate automated SMS / notification dispatch for due check-ins (B6.5).
-        """
-        prompts = self.get_due_check_ins()
-        count = 0
-        from app.db import append_audit_log_entry
-        for p in prompts:
-            append_audit_log_entry(
-                action="CHECK_IN_SMS_DISPATCHED",
-                user_id="scheduler_service",
-                role="system",
-                resource_id=p["consultation_id"],
-                details={
-                    "tier": p["urgency_tier"],
-                    "profile_id": p.get("profile_id"),
-                    "notification_channel": "SMS",
-                    "template": "Grannus RuralCare AI: It has been 2 days since your consultation. Please tap here to let us know if your symptoms are improving or worsening.",
-                },
-            )
-            count += 1
-        return count
+        """No outbound notifications are sent; patients can see due check-ins in-app."""
+        return 0
 
 
 _follow_up_manager: Optional[FollowUpManager] = None

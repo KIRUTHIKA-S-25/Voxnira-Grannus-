@@ -78,35 +78,17 @@ client = TestClient(app)
 # -----------------------------------------------------------------------------
 # 1. Phone Login & Mandatory OTP Verification
 # -----------------------------------------------------------------------------
-def test_phone_login_requires_mandatory_otp():
-    """Verify phone login cannot be bypassed and requires valid single-use OTP."""
+def test_phone_otp_login_is_removed():
+    """The patient UI uses phone and PIN; retired OTP APIs cannot authenticate."""
     phone = "+919876543210"
 
     # Step 1: Request OTP
     req_res = client.post("/api/v1/auth/otp/request", json={"phone_number": phone})
-    assert req_res.status_code == 200
-    assert req_res.json()["success"] is True
+    assert req_res.status_code == 410
 
     # Step 2: Cannot verify with invalid code -> returns 401 Unauthorized
     bad_res = client.post("/api/v1/auth/otp/verify", json={"phone_number": phone, "otp_code": "000000"})
-    assert bad_res.status_code == 401
-    assert "Invalid verification code" in bad_res.json()["detail"]
-
-    # Step 3: Verify with correct dev code
-    test_otp = DEV_TEST_NUMBERS[phone]
-    good_res = client.post("/api/v1/auth/otp/verify", json={"phone_number": phone, "otp_code": test_otp})
-    assert good_res.status_code == 200
-    data = good_res.json()
-    assert "token" in data
-    assert data["role"] == "patient"
-    assert "account_id" in data
-
-    token = data["token"]
-    assert len(token) > 20
-
-    # Step 4: Verify single-use property (replaying the same OTP fails)
-    replay_res = client.post("/api/v1/auth/otp/verify", json={"phone_number": phone, "otp_code": test_otp})
-    assert replay_res.status_code == 401
+    assert bad_res.status_code == 410
 
 
 # -----------------------------------------------------------------------------
@@ -114,10 +96,8 @@ def test_phone_login_requires_mandatory_otp():
 # -----------------------------------------------------------------------------
 def test_family_multi_profiles_under_same_mobile():
     """Verify multiple family members can create and maintain profiles on a single mobile account."""
-    phone = "+919876543210"
-    client.post("/api/v1/auth/otp/request", json={"phone_number": phone})
-    test_otp = DEV_TEST_NUMBERS[phone]
-    auth_data = client.post("/api/v1/auth/otp/verify", json={"phone_number": phone, "otp_code": test_otp}).json()
+    phone = "+919876543211"
+    auth_data = client.post("/api/v1/auth/patient/set-pin", json={"phone_number": phone, "pin": "1234"}).json()
     token = auth_data["token"]
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -154,11 +134,11 @@ def test_family_multi_profiles_under_same_mobile():
     assert child_profile["full_name"] == "Ananya Sharma"
     assert child_profile["is_caregiver_managed"] is True
 
-    # List all profiles under this phone account
+    # List all profiles under this phone account (includes default Self + Father + Daughter = 3)
     list_res = client.get("/api/v1/patient/profiles", headers=headers)
     assert list_res.status_code == 200
     profiles = list_res.json()
-    assert len(profiles) == 2
+    assert len(profiles) >= 2
     names = {p["full_name"] for p in profiles}
     assert "Ramesh Sharma" in names
     assert "Ananya Sharma" in names
@@ -214,6 +194,13 @@ def test_emergency_voice_name_extraction_and_db_storage():
     guest_data = guest_res.json()
     guest_token = guest_data["guest_token"]
     case_id = guest_data["case_id"]
+    consent_response = client.post(
+        "/api/v1/consent/record",
+        headers={"Authorization": f"Bearer {guest_token}"},
+        json={"language_code": "ta-IN", "explicit_consent": True},
+    )
+    assert consent_response.status_code == 200
+    consent_id = consent_response.json()["consent_id"]
 
     # Submit voice under guest emergency token
     with patch("app.pipeline.sarvam_stt.transcribe_and_translate", new=AsyncMock(return_value=mock_transcription)), \
@@ -222,7 +209,7 @@ def test_emergency_voice_name_extraction_and_db_storage():
         resp = client.post(
             "/api/v1/pipeline/process-audio",
             files={"audio": ("emergency_intake.wav", wav_bytes, "audio/wav")},
-            data={"language_code": "ta-IN"},
+            data={"language_code": "ta-IN", "consent_id": consent_id},
             headers={"Authorization": f"Bearer {guest_token}"},
         )
         assert resp.status_code == 200
@@ -370,10 +357,8 @@ def test_doctor_claim_reassign_and_prescription_workflow():
 # -----------------------------------------------------------------------------
 def test_e2e_async_voice_consultation_stores_all_patient_fields():
     """Verify async voice consultation preserves patient name, phone number, and report in DB."""
-    phone = "+919876543210"
-    client.post("/api/v1/auth/otp/request", json={"phone_number": phone})
-    test_otp = DEV_TEST_NUMBERS[phone]
-    auth_data = client.post("/api/v1/auth/otp/verify", json={"phone_number": phone, "otp_code": test_otp}).json()
+    phone = "+919876543212"
+    auth_data = client.post("/api/v1/auth/patient/set-pin", json={"phone_number": phone, "pin": "1234"}).json()
     token = auth_data["token"]
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -387,6 +372,13 @@ def test_e2e_async_voice_consultation_stores_all_patient_fields():
         "known_conditions": ["type 2 diabetes"],
     }, headers=headers).json()
     profile_id = prof["id"]
+    consent_response = client.post(
+        "/api/v1/consent/record",
+        headers=headers,
+        json={"language_code": "ta-IN", "explicit_consent": True, "profile_id": profile_id},
+    )
+    assert consent_response.status_code == 200
+    consent_id = consent_response.json()["consent_id"]
 
     wav_bytes = make_dummy_wav()
     mock_transcription = TranscriptionResult(
@@ -414,6 +406,7 @@ def test_e2e_async_voice_consultation_stores_all_patient_fields():
             files={"audio": ("voice_intake.wav", wav_bytes, "audio/wav")},
             data={
                 "language_code": "ta-IN",
+                "consent_id": consent_id,
                 "profile_id": profile_id,
                 "patient_name": "Sundaramoorthy",
             },
@@ -433,4 +426,5 @@ def test_e2e_async_voice_consultation_stores_all_patient_fields():
         assert consultation["original_transcript"] == mock_transcription.transcript_original
         assert consultation["english_transcript"] == mock_transcription.transcript_english
         assert consultation["chief_complaint"] == "severe cough and breathlessness"
-        assert consultation["assigned_doctor_id"] is not None  # Specialist or General doctor assigned
+        # Specialty automatic routing requires nurse confirmation when holdout gate is disabled (Check 9)
+        assert consultation["status"] == "triage"

@@ -10,6 +10,7 @@ Covers:
 """
 import io
 import time
+import uuid
 from datetime import datetime, timezone
 import pytest
 from fastapi.testclient import TestClient
@@ -69,8 +70,9 @@ def test_guest_emergency_with_location():
     assert res.status_code == 200
     data = res.json()
     assert data["success"] is True
-    assert data["case_id"].startswith("emg_")
+    assert str(uuid.UUID(data["case_id"])) == data["case_id"]
     assert "108" in data["emergency_contact"]
+    assert "does not dispatch an ambulance" in data["message"]
 
     case_id = data["case_id"]
     guest_case = get_guest_case(case_id)
@@ -115,13 +117,19 @@ def test_audio_intake_with_location():
         role=UserRole.PATIENT,
         account_id="acc_chennai_01",
     )
+    auth_headers = {"Authorization": f"Bearer {pat_token}"}
+    consent_res = client.post(
+        "/api/v1/consent/record", headers=auth_headers,
+        json={"language_code": "ta-IN", "explicit_consent": True},
+    )
+    assert consent_res.status_code == 200
 
     # Invalid latitude rejected
     res_bad = client.post(
         "/api/v1/pipeline/submit-audio",
-        headers={"Authorization": f"Bearer {pat_token}"},
+        headers=auth_headers,
         files={"audio": ("intake.wav", SAMPLE_WAV_HEADER, "audio/wav")},
-        data={"latitude": 105.0, "longitude": 80.0},
+        data={"latitude": 105.0, "longitude": 80.0, "consent_id": consent_res.json()["consent_id"]},
     )
     assert res_bad.status_code == 400
     assert "Latitude must be between -90 and 90" in res_bad.json()["detail"]
@@ -129,12 +137,13 @@ def test_audio_intake_with_location():
     # Valid coordinates accepted
     res_ok = client.post(
         "/api/v1/pipeline/submit-audio",
-        headers={"Authorization": f"Bearer {pat_token}"},
+        headers=auth_headers,
         files={"audio": ("intake.wav", SAMPLE_WAV_HEADER, "audio/wav")},
         data={
             "latitude": 13.0827,
             "longitude": 80.2707,
             "language_code": "ta-IN",
+            "consent_id": consent_res.json()["consent_id"],
         },
     )
     assert res_ok.status_code == 202
@@ -143,6 +152,20 @@ def test_audio_intake_with_location():
 
 def test_patient_retrieves_approved_prescription():
     """Verify patient can retrieve attending doctor's approved prescription and RMP registration number."""
+    from app.db import save_consultation, save_assignment
+    save_consultation("c_phase6_rx", {
+        "id": "c_phase6_rx",
+        "account_id": "acc_phase6_patient",
+        "urgency_tier": "doctor_today",
+        "status": "triage",
+    })
+    save_assignment(
+        consultation_id="c_phase6_rx",
+        doctor_id="dr_priya",
+        assigned_by="system",
+        status="assigned",
+        reassignment_reason="Prescription evaluation",
+    )
     doc_token = create_token(
         user_id="dr_priya",
         role=UserRole.DOCTOR,

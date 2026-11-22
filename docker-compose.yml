@@ -8,27 +8,23 @@ services:
       - "8000:8000"
     environment:
       - PORT=8000
-      - ENV=${ENV:-development}
+      - ENV=${ENV:-production}
       - SARVAM_API_KEY=${SARVAM_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
       - SUPABASE_URL=${SUPABASE_URL:-}
+      - DEFAULT_HOSPITAL_ID=${DEFAULT_HOSPITAL_ID:?DEFAULT_HOSPITAL_ID must be set to the Supabase hospital UUID}
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY:-}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
       - PHI_ENCRYPTION_KEY=${PHI_ENCRYPTION_KEY:-}
       - AUDIO_RETENTION_HOURS=${AUDIO_RETENTION_HOURS:-72}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
-      - SMS_PROVIDER=${SMS_PROVIDER:-console}
-      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
-      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
-      - TWILIO_PHONE_NUMBER=${TWILIO_PHONE_NUMBER:-}
-      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
-      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
-      - TWILIO_PHONE_NUMBER=${TWILIO_PHONE_NUMBER:-}
       - ALLOW_DEV_OTP=${ALLOW_DEV_OTP:-false}
+      - GRIEVANCE_OFFICER_NAME=${GRIEVANCE_OFFICER_NAME:-}
+      - GRIEVANCE_OFFICER_EMAIL=${GRIEVANCE_OFFICER_EMAIL:-}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/ready"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -41,13 +37,14 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?NEXT_PUBLIC_API_URL must be set}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:?NEXT_PUBLIC_SUPABASE_URL must be set}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:?NEXT_PUBLIC_SUPABASE_ANON_KEY must be set}
+        NEXT_PUBLIC_GRIEVANCE_OFFICER_EMAIL: ${NEXT_PUBLIC_GRIEVANCE_OFFICER_EMAIL:?NEXT_PUBLIC_GRIEVANCE_OFFICER_EMAIL must be set}
     container_name: grannus-frontend
     ports:
       - "3000:3000"
-    environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
-      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-}
-      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
     depends_on:
       backend:
         condition: service_healthy

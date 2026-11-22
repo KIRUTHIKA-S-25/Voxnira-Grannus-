@@ -529,7 +529,6 @@ class SOSDispatchPayload(BaseModel):
     accuracy: Optional[float] = Field(default=None, description="GPS accuracy in meters")
     patient_name: Optional[str] = Field(default="Emergency Patient", description="Name of patient triggering distress")
     patient_phone: Optional[str] = Field(default=None, description="Patient callback phone number")
-    contact_phone: Optional[str] = Field(default=None, description="Emergency contact phone to notify via SMS")
     emergency_type: Optional[str] = Field(default="SEVERE_MEDICAL_DISTRESS", description="Distress category")
     notes: Optional[str] = Field(default=None, description="Additional context or notes")
 
@@ -537,11 +536,10 @@ class SOSDispatchPayload(BaseModel):
 class SOSDispatchResponse(BaseModel):
     success: bool = True
     dispatch_id: str
-    status: str = "DISPATCHED"
+    status: str = "RECORDED"
     ambulance_number: str = "108"
     emergency_number: str = "112"
     location_recorded: bool = False
     map_url: Optional[str] = None
-    contact_notified: bool = False
     message: str
     timestamp: str

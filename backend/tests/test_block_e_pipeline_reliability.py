@@ -152,8 +152,9 @@ def test_due_check_ins_and_scheduler_dispatch():
     due = mgr.get_due_check_ins()
     assert any(d["consultation_id"] == cid for d in due)
 
+    # Outbound SMS is permanently retired (Check 8); in-app follow-up tracking returns 0 outbound dispatches
     dispatched = mgr.dispatch_due_check_in_notifications()
-    assert dispatched >= 1
+    assert dispatched == 0
 
 
 # -----------------------------------------------------------------------------

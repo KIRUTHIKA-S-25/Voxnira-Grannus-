@@ -235,9 +235,12 @@ def test_voice_threads_and_back_translation():
 def test_api_check_in_endpoint(client):
     """Test POST /api/v1/consultations/{id}/check-in endpoint."""
     from app.auth import create_token, UserRole
-    token = create_token("test_pat_01", UserRole.PATIENT, phone_number="+919876543210")
+    from app.db import save_consultation
+    account_id = "api_test_patient_account"
+    token = create_token("test_pat_01", UserRole.PATIENT, account_id=account_id, phone_number="+919876543210")
     headers = {"Authorization": f"Bearer {token}"}
     cid = "api-consult-001"
+    save_consultation(cid, {"account_id": account_id, "urgency_tier": "self_care", "status": "triage"})
     # Call check-in with 'worse'
     response = client.post(
         f"/api/v1/consultations/{cid}/check-in",
@@ -255,9 +258,12 @@ def test_api_check_in_endpoint(client):
 def test_api_one_tap_escalate_endpoint(client):
     """Test POST /api/v1/consultations/{id}/escalate endpoint."""
     from app.auth import create_token, UserRole
-    token = create_token("test_pat_01", UserRole.PATIENT, phone_number="+919876543210")
+    from app.db import save_consultation
+    account_id = "api_test_patient_account"
+    token = create_token("test_pat_01", UserRole.PATIENT, account_id=account_id, phone_number="+919876543210")
     headers = {"Authorization": f"Bearer {token}"}
     cid = "api-consult-002"
+    save_consultation(cid, {"account_id": account_id, "urgency_tier": "self_care", "status": "triage"})
     # Call escalate
     response = client.post(
         f"/api/v1/consultations/{cid}/escalate",
@@ -274,9 +280,12 @@ def test_api_one_tap_escalate_endpoint(client):
 def test_api_voice_thread_endpoint(client):
     """Test GET /api/v1/consultations/{id}/thread endpoint."""
     from app.auth import create_token, UserRole
-    token = create_token("test_pat_01", UserRole.PATIENT, phone_number="+919876543210")
+    from app.db import save_consultation
+    account_id = "api_test_patient_account"
+    token = create_token("test_pat_01", UserRole.PATIENT, account_id=account_id, phone_number="+919876543210")
     headers = {"Authorization": f"Bearer {token}"}
     cid = "api-consult-003"
+    save_consultation(cid, {"account_id": account_id, "urgency_tier": "doctor_soon", "status": "triage"})
     response = client.get(f"/api/v1/consultations/{cid}/thread", headers=headers)
     assert response.status_code == 200
     data = response.json()

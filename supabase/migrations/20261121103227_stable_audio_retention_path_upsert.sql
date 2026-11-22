@@ -1,0 +1,3 @@
+DROP INDEX IF EXISTS public.audio_retention_queue_file_path_lookup_hash_key;
+CREATE UNIQUE INDEX audio_retention_queue_file_path_lookup_hash_key
+  ON public.audio_retention_queue(file_path_lookup_hash);

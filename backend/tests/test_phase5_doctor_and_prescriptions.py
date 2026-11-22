@@ -245,12 +245,26 @@ def test_lock_release_returns_to_triage():
 
 def test_prescription_validation_and_persistence():
     """Verify structured prescription item validation and automatic database persistence."""
+    from app.db import save_consultation, save_assignment
     doc_token = create_token(
         user_id="dr_rajan",
         role=UserRole.DOCTOR,
         doctor_reg_no="TNMC-48291",
         state_council="Tamil Nadu Medical Council",
         is_verified_doctor=True,
+    )
+
+    save_consultation("c_phase5_rx_test", {
+        "id": "c_phase5_rx_test",
+        "urgency_tier": "doctor_today",
+        "status": "triage",
+    })
+    save_assignment(
+        consultation_id="c_phase5_rx_test",
+        doctor_id="dr_rajan",
+        assigned_by="system",
+        status="assigned",
+        reassignment_reason="Testing prescription validation",
     )
 
     # 1. Reject empty prescriptions array when action_type is PRESCRIBE_MEDICATION

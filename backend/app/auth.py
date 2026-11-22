@@ -264,7 +264,20 @@ async def get_current_user(
             detail="Missing Authorization Bearer token or session cookie.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return verify_token(token)
+    user = verify_token(token)
+    if user.role == UserRole.PATIENT and user.account_id:
+        from app.config import get_settings
+
+        if get_settings().is_production:
+            from app.db import get_patient_account_by_id
+
+            if not get_patient_account_by_id(user.account_id):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Patient account is inactive. Sign in again.",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+    return user
 
 
 def require_role(allowed_roles: List[UserRole]):

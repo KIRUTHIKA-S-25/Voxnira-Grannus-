@@ -1,5 +1,5 @@
 """
-Test Suite for Phase 2: Accounts, Patient Profiles, Phone OTP Hardening, and Cross-Profile Isolation.
+Test Suite for Phase 2: Accounts, Patient Profiles, SMS retirement, and Cross-Profile Isolation.
 
 Verifies:
   1. Cross-profile consultation isolation: Patient A cannot read Patient B's consultations via profile_id (returns 403).
@@ -14,26 +14,15 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.auth import create_token, UserRole
-from app.db import (
-    save_consultation,
-    get_consultation,
-    get_consultations_for_patient,
-    normalize_phone,
-    _OTP_COOLDOWNS,
-)
-from app.security.rate_limiter import otp_rate_limiter
+from app.db import save_consultation, get_consultation, get_consultations_for_patient, normalize_phone
 
 client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
 def clean_otp_state():
-    """Ensure clean cooldowns and rate limiter state before each test."""
-    _OTP_COOLDOWNS.clear()
-    otp_rate_limiter.clients.clear()
+    """Retain the legacy fixture hook while the PIN flow needs no OTP state."""
     yield
-    _OTP_COOLDOWNS.clear()
-    otp_rate_limiter.clients.clear()
 
 
 def test_cross_profile_consultation_access_denied():
@@ -113,30 +102,17 @@ def test_recycled_phone_clears_prior_consultations():
     # Verify underlying consultation is marked disassociated
     raw_consult = get_consultation(cid)
     assert raw_consult["account_id"] is None
-    assert raw_consult["recycled_disassociated"] is True
+    assert raw_consult["profile_id"] is None
 
 
-def test_otp_request_rate_limiting():
-    """Multiple rapid OTP requests from the same IP must trigger 429 Too Many Requests."""
+def test_otp_request_is_retired_without_sms():
+    """OTP requests are permanently retired when outbound SMS is disabled."""
     test_phone = "+919876543210"
     ip_headers = {"x-forwarded-for": "198.51.100.55"}
 
-    try:
-        # Exhaust burst limit (burst limit is 3 requests)
-        for _ in range(3):
-            _OTP_COOLDOWNS.clear()  # bypass phone cooldown to specifically test IP limiter
-            res = client.post("/api/v1/auth/otp/request", json={"phone_number": test_phone}, headers=ip_headers)
-            assert res.status_code == 200
-
-        # 4th burst request must be blocked by IP rate limiter
-        _OTP_COOLDOWNS.clear()
-        res_blocked = client.post("/api/v1/auth/otp/request", json={"phone_number": test_phone}, headers=ip_headers)
-        assert res_blocked.status_code == 429
-        assert "Rate limit exceeded" in res_blocked.json()["detail"]
-        assert "Retry-After" in res_blocked.headers
-    finally:
-        otp_rate_limiter.clients.clear()
-        _OTP_COOLDOWNS.clear()
+    for _ in range(4):
+        res = client.post("/api/v1/auth/otp/request", json={"phone_number": test_phone}, headers=ip_headers)
+        assert res.status_code == 410
 
 
 def test_caregiver_profile_creation_and_attributes():
@@ -170,26 +146,15 @@ def test_e164_trunk_prefix_normalization():
     assert normalize_phone("+91-98765-43210") == "+919876543210"
 
 
-def test_consistent_otp_response_prevents_enumeration():
-    """OTP requests return uniform responses without disclosing if an account pre-exists."""
+def test_otp_retirement_response_is_uniform():
+    """Retired OTP routes return the same PIN-only response for any phone."""
     res1 = client.post("/api/v1/auth/otp/request", json={"phone_number": "+919811122233"})
-    assert res1.status_code == 200
-    data1 = res1.json()
-
-    _OTP_COOLDOWNS.clear()
-    otp_rate_limiter.clients.clear()
+    assert res1.status_code == 410
 
     res2 = client.post("/api/v1/auth/otp/request", json={"phone_number": "+919822233344"})
-    assert res2.status_code == 200
-    data2 = res2.json()
+    assert res2.status_code == 410
+    assert res1.json() == res2.json()
 
-    # Invariant: Responses must be consistent and never leak OTP codes or user existence
-    assert data1["success"] == data2["success"]
-    assert "Verification code" in data1["message"]
-    assert "Verification code" in data2["message"]
-    assert "code" not in data1
-    assert "code" not in data2
-    otp_rate_limiter.clients.clear()
 
 
 def test_patient_phone_status_and_pin_registration():

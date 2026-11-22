@@ -8,6 +8,9 @@ Endpoints:
 import os
 import logging
 import asyncio
+import ipaddress
+import re
+from urllib.parse import urlsplit
 from typing import Optional, List, Dict, Any, Union
 
 from dotenv import load_dotenv
@@ -19,7 +22,7 @@ from datetime import datetime, timezone
 import hashlib
 import time
 import uuid
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Response, Depends, status, Security, BackgroundTasks
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Response, Depends, status, Security
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -66,7 +69,7 @@ from app.security.input_validation import validate_audio_upload, sanitize_filena
 from app.security.rate_limiter import rate_limit_patient_intake
 from app.security.audit_logger import get_audit_logger
 from app.security.data_retention import get_retention_manager
-from app.consent import get_consent_notice, record_patient_consent
+from app.consent import CONSENT_VERSION, get_consent_notice, record_patient_consent
 from app.regulatory import CDSCO_SAMD_DECLARATION, EMERGENCY_DISCLAIMER_TEXT, validate_abdm_fhir_bundle
 from app.jobs.job_manager import get_job_manager, JobProgressResponse
 from app.telehealth.clinical_actions import (
@@ -80,6 +83,83 @@ from app.voice_threads import get_voice_thread_manager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rural_care.api")
+
+
+def _is_production_secret_missing(value: Optional[str]) -> bool:
+    if not value or not value.strip():
+        return True
+    lowered = value.lower()
+    return any(marker in lowered for marker in (
+        "your", "change_me", "change me", "example", "placeholder", "replace", "set_the_", "set the",
+    ))
+
+
+def _is_deployed_https_origin(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname
+        if (
+            parsed.scheme != "https" or not host or parsed.username or parsed.password
+            or parsed.path or parsed.query or parsed.fragment
+        ):
+            return False
+        if host == "localhost" or host.endswith(".localhost"):
+            return False
+        if any(marker in host for marker in ("example", "yourdomain")) or host.endswith(".test"):
+            return False
+        try:
+            if ipaddress.ip_address(host).is_loopback:
+                return False
+        except ValueError:
+            pass
+        parsed.port  # Validate malformed ports.
+        return True
+    except ValueError:
+        return False
+
+
+def _validate_production_settings(settings) -> None:
+    """Fail startup when a production-critical integration is missing or templated."""
+    if not settings.is_production:
+        return
+
+    required_values = (
+        ("SUPABASE_URL", settings.supabase_url),
+        ("SUPABASE_SERVICE_ROLE_KEY", settings.supabase_service_role_key),
+        ("DEFAULT_HOSPITAL_ID", settings.default_hospital_id),
+        ("SARVAM_API_KEY", settings.sarvam_api_key),
+        ("GEMINI_API_KEY", settings.gemini_api_key),
+        ("JWT_SECRET_KEY", settings.jwt_secret_key),
+        ("PHI_ENCRYPTION_KEY", settings.phi_encryption_key),
+        ("GRIEVANCE_OFFICER_NAME", settings.grievance_officer_name),
+        ("GRIEVANCE_OFFICER_EMAIL", settings.grievance_officer_email),
+    )
+    for name, value in required_values:
+        if _is_production_secret_missing(value):
+            raise RuntimeError(f"{name} is missing or still contains a template value.")
+
+    supabase_url = urlsplit(settings.supabase_url)
+    if supabase_url.scheme != "https" or not supabase_url.hostname:
+        raise RuntimeError("SUPABASE_URL must be a valid HTTPS URL in production.")
+    try:
+        if str(uuid.UUID(settings.default_hospital_id)) != settings.default_hospital_id.lower():
+            raise ValueError("Hospital ID is not canonical")
+    except (ValueError, AttributeError):
+        raise RuntimeError("DEFAULT_HOSPITAL_ID must be a valid UUID for a hospital in the configured Supabase project.")
+    if len(settings.jwt_secret_key) < 32:
+        raise RuntimeError("JWT_SECRET_KEY must be at least 32 characters in production.")
+    if len(settings.phi_encryption_key) < 32:
+        raise RuntimeError("PHI_ENCRYPTION_KEY must be at least 32 characters in production.")
+    if not 1 <= settings.audio_retention_hours <= 72:
+        raise RuntimeError("AUDIO_RETENTION_HOURS must be between 1 and 72 in production.")
+    if settings.allow_dev_otp:
+        raise RuntimeError("ALLOW_DEV_OTP must be false in production.")
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", settings.grievance_officer_email.strip()):
+        raise RuntimeError("GRIEVANCE_OFFICER_EMAIL must be a valid email address in production.")
+
+    origins = [origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "").split(",") if origin.strip()]
+    if not origins or any(not _is_deployed_https_origin(origin) for origin in origins):
+        raise RuntimeError("ALLOWED_ORIGINS must contain only deployed HTTPS origins without paths in production.")
 
 async def _periodic_retention_sweep_worker(interval_seconds: int = 3600):
     """Background worker that periodically purges expired audio files (H4.2)."""
@@ -103,13 +183,7 @@ async def lifespan(app: FastAPI):
     if not settings.jwt_secret_key:
         raise RuntimeError("JWT_SECRET_KEY is mandatory and not configured. Backend refusing to start.")
 
-    # Block H2: In production/staging, database must be configured
-    if settings.env.lower() in ("production", "prod", "staging"):
-        key = settings.supabase_service_role_key or settings.supabase_anon_key
-        if not settings.supabase_url or not key:
-            raise RuntimeError(f"Database (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY) is mandatory in {settings.env}. Backend refusing to start.")
-        if settings.sms_provider == "twilio" and not settings.twilio_account_sid:
-            raise RuntimeError(f"Twilio SMS provider is selected but twilio_account_sid is not configured in {settings.env}.")
+    _validate_production_settings(settings)
 
     try:
         model = get_model()
@@ -128,6 +202,13 @@ async def lifespan(app: FastAPI):
             logger.info("Startup audio retention sweep purged %d files.", len(purged))
     except Exception as exc:
         logger.warning("Startup audio retention sweep error: %s", exc)
+
+    # Recover any durable in-flight pipeline jobs across worker restarts
+    try:
+        from app.jobs.job_manager import get_job_manager
+        asyncio.create_task(get_job_manager().recover_pending_jobs())
+    except Exception as exc:
+        logger.warning("Pipeline job recovery error: %s", exc)
 
     sweep_task = asyncio.create_task(_periodic_retention_sweep_worker())
     try:
@@ -171,7 +252,7 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(self), geolocation=()"
     response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none';"
-    if get_settings().env == "production":
+    if get_settings().is_production:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
     return response
 
@@ -211,11 +292,25 @@ def ready() -> dict:
     """Readiness probe validating models and critical integrations."""
     settings = get_settings()
     model = get_model()
-    is_ready = bool(settings.sarvam_api_key) and bool(settings.gemini_api_key)
+    database_connected = not settings.is_production
+    if settings.is_production:
+        try:
+            from app.db import get_supabase_client
+            db_client = get_supabase_client()
+            hospital_response = (db_client.table("hospitals").select("id")
+                                 .eq("id", settings.default_hospital_id).limit(1).execute())
+            if not hospital_response.data:
+                raise RuntimeError("Configured default hospital was not found in Supabase.")
+            database_connected = True
+        except Exception as exc:
+            logger.error("Database readiness check failed (%s)", type(exc).__name__)
+
+    is_ready = bool(settings.sarvam_api_key) and bool(settings.gemini_api_key) and database_connected
     payload = {
         "status": "ready" if is_ready else "degraded",
         "sarvam_configured": bool(settings.sarvam_api_key),
         "gemini_configured": bool(settings.gemini_api_key),
+        "database_connected": database_connected,
         "ml_model_loaded": model.is_available(),
     }
     if not is_ready:
@@ -317,9 +412,9 @@ class PatientProfileCreate(BaseModel):
 
 
 class ConsentRequest(BaseModel):
-    patient_id: str
     language_code: str = "en-IN"
     explicit_consent: bool
+    profile_id: Optional[str] = None
 
 
 class ErasureRequest(BaseModel):
@@ -363,7 +458,7 @@ def set_patient_pin_endpoint(req: PatientSetPinRequest, response: Response):
         account_id=account_id,
     )
 
-    is_prod = get_settings().env == "production"
+    is_prod = get_settings().is_production
     response.set_cookie(
         key="grannus_auth_token",
         value=token,
@@ -416,7 +511,7 @@ def login_patient_with_pin_endpoint(req: PatientLoginRequest, response: Response
         account_id=account_id,
     )
 
-    is_prod = get_settings().env == "production"
+    is_prod = get_settings().is_production
     response.set_cookie(
         key="grannus_auth_token",
         value=token,
@@ -449,77 +544,17 @@ def request_phone_otp_endpoint(
     request: Request,
 ):
     """
-    Request 6-digit phone OTP for patient authentication (B2.2, H1.2).
-    Enforces cooldown and 5-minute single-use expiration.
-    Codes never appear in API responses, logs, or error payloads.
+    Retired compatibility endpoint. Patient sign-in uses phone number and PIN.
     """
-    from app.security.rate_limiter import rate_limit_otp_request
-    rate_limit_otp_request(request)
-    from app.db import request_phone_otp
-    success, message, _ = request_phone_otp(req.phone_number)
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=message,
-        )
-    return OTPRequestResponse(
-        success=True,
-        message=message,
-    )
+    raise HTTPException(status_code=410, detail="SMS sign-in is disabled. Use your patient PIN to sign in.")
 
 
 @app.post("/api/v1/auth/otp/verify", response_model=LoginResponse)
 def verify_phone_otp_endpoint(req: OTPVerifyRequest, response: Response):
     """
-    Verify phone OTP for patient session creation (B2.2).
-    Single-use, max 5 attempts. Sets httpOnly cookie (A4).
+    Retired compatibility endpoint. Patient sign-in uses phone number and PIN.
     """
-    from app.db import verify_phone_otp
-    success, message, account = verify_phone_otp(req.phone_number, req.otp_code)
-    if not success or not account:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=message,
-        )
-
-    account_id = account["id"]
-    phone_number = account["phone_number"]
-    user_id = f"pat_{account_id[:8]}"
-
-    token = create_token(
-        user_id=user_id,
-        role=UserRole.PATIENT,
-        phone_number=phone_number,
-        account_id=account_id,
-    )
-
-    is_prod = get_settings().env == "production"
-    response.set_cookie(
-        key="grannus_auth_token",
-        value=token,
-        httponly=True,
-        secure=is_prod,
-        samesite="lax",
-        path="/",
-        max_age=86400,
-    )
-
-    get_audit_logger().log(
-        action="AUTH_PATIENT_OTP_VERIFIED",
-        user_id=user_id,
-        role=UserRole.PATIENT.value,
-        details={"account_id": account_id},
-    )
-
-    return LoginResponse(
-        token=token,
-        user_id=user_id,
-        role=UserRole.PATIENT,
-        is_verified_doctor=False,
-        phone_number=phone_number,
-        account_id=account_id,
-    )
-
+    raise HTTPException(status_code=410, detail="SMS sign-in is disabled. Use your patient PIN to sign in.")
 
 @app.post("/api/v1/auth/login", response_model=LoginResponse)
 async def login(req: LoginRequest, response: Response):
@@ -566,7 +601,8 @@ async def login(req: LoginRequest, response: Response):
 
     is_verified_doc = None
     if staff and role == UserRole.DOCTOR:
-        is_verified_doc = staff.get("is_verified_doctor", True)
+        # Never infer licensure from a missing DB field or registration-number format.
+        is_verified_doc = staff.get("is_verified_doctor", False)
 
     if role == UserRole.DOCTOR:
         if not doc_reg:
@@ -590,7 +626,7 @@ async def login(req: LoginRequest, response: Response):
     )
     user = verify_token(token)
 
-    is_prod = get_settings().env == "production"
+    is_prod = get_settings().is_production
     response.set_cookie(
         key="grannus_auth_token",
         value=token,
@@ -623,8 +659,8 @@ async def login(req: LoginRequest, response: Response):
 def guest_emergency_intake(req: GuestEmergencyRequest, response: Response):
     """
     Emergency access without OTP (H1.3).
-    Instant 'Call 108' triage screen appears on client, and the backend generates
-    a secure single-case guest token alerting the hospital ER.
+    Creates a secure single-case guest intake. Patients must call 108/112 directly;
+    this endpoint does not alert a hospital or dispatch emergency services.
     Sets httpOnly session cookie (A4).
     """
     if req.latitude is not None and not (-90.0 <= req.latitude <= 90.0):
@@ -636,7 +672,8 @@ def guest_emergency_intake(req: GuestEmergencyRequest, response: Response):
     if len(clean_name) < 2:
         clean_name = "Emergency Patient"
 
-    case_id = f"emg_{uuid.uuid4().hex[:12]}"
+    # `guest_cases.id` and consent guest_case_id links are UUID columns.
+    case_id = str(uuid.uuid4())
     guest_id = f"guest_{uuid.uuid4().hex[:12]}"
 
     token = create_token(
@@ -647,7 +684,7 @@ def guest_emergency_intake(req: GuestEmergencyRequest, response: Response):
         expires_in_seconds=7200,  # 2 hours
     )
 
-    is_prod = get_settings().env == "production"
+    is_prod = get_settings().is_production
     response.set_cookie(
         key="grannus_auth_token",
         value=token,
@@ -672,7 +709,6 @@ def guest_emergency_intake(req: GuestEmergencyRequest, response: Response):
     })
     save_consultation(case_id, {
         "id": case_id,
-        "patient_id": guest_id,
         "urgency_tier": "emergency",
         "status": "emergency_unverified",
         "chief_complaint": f"Emergency Guest Walk-in / Intake: {clean_name}",
@@ -697,59 +733,56 @@ def guest_emergency_intake(req: GuestEmergencyRequest, response: Response):
         success=True,
         guest_token=token,
         case_id=case_id,
-        message="Emergency intake recorded. Hospital ER alerted. Dial 108 or 112 immediately.",
+        message="Emergency intake recorded. Call 108 or 112 now; this app does not dispatch an ambulance.",
         emergency_contact="108 / 112",
     )
 
 
 @app.post("/api/v1/emergency/sos", response_model=SOSDispatchResponse)
-async def dispatch_emergency_sos(req: SOSDispatchPayload, background_tasks: BackgroundTasks):
+async def dispatch_emergency_sos(
+    req: SOSDispatchPayload,
+    request: Request,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
     """
-    Emergency SOS Dispatch (E2):
-      - Receives patient coordinates (latitude, longitude, accuracy) and distress metadata.
-      - Dispatches live SMS alert to trusted contact / emergency casualty desk.
-      - Persists an immutable dispatch record to the database for hospital ER responders.
-      - Emits a high-priority audit trail log.
+    Records a patient SOS request and returns a clear instruction to call emergency services directly. This API
+    does not connect to ambulance or emergency-service dispatch systems.
     """
     if req.latitude is not None and not (-90.0 <= req.latitude <= 90.0):
         raise HTTPException(status_code=400, detail="Latitude must be between -90 and 90 degrees.")
     if req.longitude is not None and not (-180.0 <= req.longitude <= 180.0):
         raise HTTPException(status_code=400, detail="Longitude must be between -180 and 180 degrees.")
+    if current_user.role not in (UserRole.PATIENT, UserRole.GUEST_EMERGENCY):
+        raise HTTPException(status_code=403, detail="Only patients may create an emergency SOS alert.")
+    from app.security.rate_limiter import rate_limit_sos
+    rate_limit_sos(request, current_user.user_id)
 
-    from app.db import save_sos_dispatch, normalize_phone
-    record = save_sos_dispatch(req.dict())
+    from app.db import save_sos_dispatch
+    dispatch_data = req.model_dump()
+    if current_user.role == UserRole.PATIENT:
+        from app.db import get_patient_account_by_id
+        account = get_patient_account_by_id(current_user.account_id) if current_user.account_id else None
+        dispatch_data["patient_phone"] = account.get("phone_number") if account else None
+    else:
+        dispatch_data["patient_phone"] = None
+    record = save_sos_dispatch(dispatch_data)
     dispatch_id = record["id"]
 
     map_url = None
     if req.latitude is not None and req.longitude is not None:
         map_url = f"https://www.google.com/maps?q={req.latitude},{req.longitude}"
 
-    contact_notified = False
-    if req.contact_phone:
-        contact_norm = normalize_phone(req.contact_phone)
-        loc_str = f"at location: {map_url}" if map_url else "location unavailable"
-        sms_text = (
-            f"EMERGENCY SOS: Patient {req.patient_name} triggered emergency medical distress {loc_str}. "
-            f"National Ambulance 108 notified."
-        )
-        try:
-            from app.sms import send_sms
-            background_tasks.add_task(send_sms, contact_norm, sms_text)
-            contact_notified = True
-        except Exception as exc:
-            logger.error("Failed to enqueue SOS contact notification SMS: %s", exc)
-
-    get_audit_logger().log(
+    from app.db import append_audit_log_entry
+    append_audit_log_entry(
         action="EMERGENCY_SOS_TRIGGERED",
-        user_id=req.patient_phone or "emergency_caller",
-        role="patient",
+        user_id=current_user.account_id or current_user.user_id,
+        role=current_user.role.value,
         resource_id=dispatch_id,
         details={
             "latitude": req.latitude,
             "longitude": req.longitude,
             "accuracy": req.accuracy,
             "patient_name": req.patient_name,
-            "contact_phone": req.contact_phone,
             "emergency_type": req.emergency_type,
         },
     )
@@ -757,13 +790,12 @@ async def dispatch_emergency_sos(req: SOSDispatchPayload, background_tasks: Back
     return SOSDispatchResponse(
         success=True,
         dispatch_id=dispatch_id,
-        status="DISPATCHED",
+        status="RECORDED",
         ambulance_number="108",
         emergency_number="112",
         location_recorded=bool(req.latitude is not None and req.longitude is not None),
         map_url=map_url,
-        contact_notified=contact_notified,
-        message="Emergency SOS dispatched. Ambulance 108 and trusted contacts notified with GPS coordinates.",
+        message="SOS request recorded. Call 108 or 112 yourself now; this app does not notify contacts or dispatch emergency services.",
         timestamp=record["created_at"],
     )
 
@@ -788,7 +820,7 @@ def refresh_session_token(response: Response, current_user: AuthenticatedUser = 
         expires_in_seconds=86400,
     )
 
-    is_prod = get_settings().env == "production"
+    is_prod = get_settings().is_production
     response.set_cookie(
         key="grannus_auth_token",
         value=new_token,
@@ -901,10 +933,10 @@ async def list_patient_profiles(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """List all patient profiles linked to authenticated phone account (B4.1)."""
-    if current_user.role == UserRole.GUEST_EMERGENCY:
+    if current_user.role != UserRole.PATIENT:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Forbidden: Guest emergency sessions cannot browse patient profiles.",
+            detail="Forbidden: Only patient accounts can browse patient profiles.",
         )
     from app.db import get_profiles_for_account
     if not current_user.account_id:
@@ -921,15 +953,17 @@ async def list_patient_consultations(
     List all clinical intake reports and consultations for the authenticated patient (B4.2).
     Optionally filters by specific patient family profile.
     """
-    if current_user.role == UserRole.GUEST_EMERGENCY:
+    if current_user.role != UserRole.PATIENT:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Forbidden: Guest emergency sessions cannot browse historical consultation lists.",
+            detail="Forbidden: Only patient accounts can browse their consultation history.",
         )
     if profile_id:
         from app.db import get_patient_profile
         prof = get_patient_profile(profile_id)
-        if prof and prof.get("account_id") and prof.get("account_id") != current_user.account_id:
+        if not prof:
+            raise HTTPException(status_code=404, detail="Patient profile not found.")
+        if prof.get("account_id") != current_user.account_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Forbidden: Cannot access consultations of another patient profile.",
@@ -949,6 +983,8 @@ async def create_patient_profile_endpoint(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """Register a new patient profile under verified phone account (B4.1)."""
+    if current_user.role != UserRole.PATIENT:
+        raise HTTPException(status_code=403, detail="Only authenticated patient accounts may create patient profiles.")
     if not current_user.account_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -979,21 +1015,20 @@ def get_patient_profile_endpoint(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """Retrieve details for a single patient profile with ownership enforcement (H3.1)."""
-    if current_user.role == UserRole.GUEST_EMERGENCY:
+    if current_user.role != UserRole.PATIENT:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Forbidden: Guest emergency sessions cannot browse patient profiles.",
+            detail="Forbidden: Only patient accounts can browse patient profiles.",
         )
     from app.db import get_patient_profile
     profile = get_patient_profile(profile_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Patient profile not found.")
-    if current_user.role == UserRole.PATIENT:
-        if profile.get("account_id") and profile.get("account_id") != current_user.account_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Forbidden: You cannot access another account's patient profile.",
-            )
+    if profile.get("account_id") != current_user.account_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: You cannot access another account's patient profile.",
+        )
     get_audit_logger().log(
         action="PATIENT_PROFILE_READ",
         user_id=current_user.user_id,
@@ -1010,21 +1045,20 @@ def verify_profile_pin_endpoint(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """Verify 4-digit PIN before unlocking private patient profile (B4.3)."""
-    if current_user.role == UserRole.GUEST_EMERGENCY:
+    if current_user.role != UserRole.PATIENT:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Forbidden: Guest emergency sessions cannot verify profile PINs.",
+            detail="Forbidden: Only patient accounts can verify patient profile PINs.",
         )
     from app.db import get_patient_profile, verify_profile_pin
     profile = get_patient_profile(profile_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Patient profile not found.")
-    if current_user.role == UserRole.PATIENT:
-        if profile.get("account_id") and profile.get("account_id") != current_user.account_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Forbidden: You cannot access another account's patient profile.",
-            )
+    if profile.get("account_id") != current_user.account_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: You cannot access another account's patient profile.",
+        )
     if not verify_profile_pin(profile_id, req.pin):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1039,6 +1073,8 @@ def reset_recycled_account(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """Clear prior profile associations for recycled phone numbers (B4.4)."""
+    if current_user.role != UserRole.PATIENT:
+        raise HTTPException(status_code=403, detail="Only patient accounts may reset recycled phone history.")
     if not current_user.account_id:
         raise HTTPException(status_code=400, detail="Authenticated patient phone account required.")
     from app.db import reset_recycled_phone_number
@@ -1055,54 +1091,86 @@ def request_patient_data_erasure(
     req: PatientErasureRequest,
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    """
-    Statutory Right to Erasure under Section 12 of India DPDP Act 2023:
-      - Purges stored raw voice recordings.
-      - Anonymizes identifying consultation records.
-      - Logs action in deletion_log and preserves audit trail.
-    """
+    """Erase the authenticated patient's account through the atomic data layer."""
     if current_user.role != UserRole.PATIENT:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Forbidden: Only patients can request statutory account erasure.",
         )
-    from app.security.data_retention import get_retention_manager
-    res = get_retention_manager().process_patient_erasure(
-        patient_id=current_user.account_id or current_user.user_id,
-        reason=req.reason,
-        hospital_id=current_user.hospital_id,
-    )
-    return res
+    if not current_user.account_id:
+        raise HTTPException(status_code=400, detail="Authenticated patient account required for data erasure.")
+    from app.db import erase_account_data
+    try:
+        erase_account_data(
+            current_user.account_id,
+            reason=req.reason or "Statutory erasure requested under DPDP Act 2023",
+        )
+    except RuntimeError as exc:
+        logger.error("Patient erasure request failed for authenticated account")
+        raise HTTPException(status_code=503, detail="Patient data erasure could not be completed. Please retry.") from exc
+    return {
+        "status": "success",
+        "message": "Patient account data was erased or anonymized according to retention requirements.",
+    }
 
 
 @app.get("/api/v1/consent/notice")
 def consent_notice(language_code: str = "en-IN"):
-    """Fetch localized consent notice under India's DPDP Act 2023."""
+    """Fetch the localized consent notice and configured grievance contact."""
     return get_consent_notice(language_code)
 
 
 @app.post("/api/v1/consent/record")
-def record_consent(req: ConsentRequest, request: Request):
+def record_consent(
+    req: ConsentRequest,
+    request: Request,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
     """Store timestamped, explicit patient consent before audio processing (B4.5)."""
+    if current_user.role not in (UserRole.PATIENT, UserRole.GUEST_EMERGENCY):
+        raise HTTPException(status_code=403, detail="Only a patient may record consent for their own consultation.")
+
+    owner_type = "patient_account" if current_user.role == UserRole.PATIENT else "guest_case"
+    owner_id = current_user.account_id if owner_type == "patient_account" else current_user.guest_case_id
+    if not owner_id and get_settings().is_production:
+        raise HTTPException(status_code=403, detail="A valid patient account or guest case is required to record consent.")
+    # Accountless patient tokens exist only in isolated development/test flows.
+    owner_id = owner_id or current_user.user_id
+    if not owner_id:
+        raise HTTPException(status_code=403, detail="A patient account or guest case is required to record consent.")
+    if req.profile_id:
+        if current_user.role != UserRole.PATIENT or not current_user.account_id:
+            raise HTTPException(status_code=403, detail="A patient profile must belong to an authenticated patient account.")
+        from app.db import get_patient_profile
+        profile = get_patient_profile(req.profile_id)
+        if not profile or profile.get("account_id") != current_user.account_id:
+            raise HTTPException(status_code=403, detail="The selected patient profile does not belong to this account.")
+
     client_ip = request.client.host if request.client else "127.0.0.1"
     try:
         record = record_patient_consent(
-            patient_id=req.patient_id,
+            patient_id=owner_id,
             language_code=req.language_code,
             client_ip=client_ip,
             explicit_consent=req.explicit_consent,
         )
         from app.db import save_consent_record
         save_consent_record({
-            "patient_id": req.patient_id,
+            "id": record.consent_id,
+            "patient_id": None,
+            "owner_type": owner_type,
+            "owner_id": owner_id,
+            "account_id": current_user.account_id if owner_type == "patient_account" else None,
+            "guest_case_id": current_user.guest_case_id if owner_type == "guest_case" else None,
             "version": record.consent_version,
             "language_code": req.language_code,
             "ip_hash": record.ip_hash,
+            "profile_id": req.profile_id,
             "is_granted": True,
         })
         get_audit_logger().log(
             action="RECORD_CONSENT",
-            user_id=req.patient_id,
+            user_id=owner_id,
             role="patient",
             details={"consent_id": record.consent_id, "version": record.consent_version},
         )
@@ -1111,11 +1179,31 @@ def record_consent(req: ConsentRequest, request: Request):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _require_current_audio_consent(
+    consent_id: Optional[str], current_user: AuthenticatedUser, profile_id: Optional[str]
+) -> None:
+    """Require a persisted current-version consent belonging to this patient and profile."""
+    if not consent_id:
+        raise HTTPException(status_code=428, detail="Record consent before submitting patient audio.")
+    if current_user.role not in (UserRole.PATIENT, UserRole.GUEST_EMERGENCY):
+        raise HTTPException(status_code=403, detail="Only a patient may submit patient audio.")
+    owner_type = "patient_account" if current_user.role == UserRole.PATIENT else "guest_case"
+    owner_id = current_user.account_id if owner_type == "patient_account" else current_user.guest_case_id
+    if not owner_id and get_settings().is_production:
+        raise HTTPException(status_code=403, detail="A valid patient account or guest case is required for audio submission.")
+    owner_id = owner_id or current_user.user_id
+    from app.db import get_consent_record
+    if not get_consent_record(consent_id, owner_type, owner_id, profile_id, CONSENT_VERSION):
+        raise HTTPException(status_code=403, detail="Consent is missing, outdated, or does not match this patient and profile.")
+
+
 @app.get("/api/v1/patient/data-export")
 def export_patient_data(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """Statutory Right to Data Portability & Access under DPDP Act 2023 (B4.6)."""
+    if current_user.role != UserRole.PATIENT:
+        raise HTTPException(status_code=403, detail="Only patient accounts may export patient data.")
     if not current_user.account_id:
         raise HTTPException(status_code=400, detail="Authenticated account required for data export.")
     from app.db import export_account_data
@@ -1135,6 +1223,8 @@ def erase_patient_data(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """Statutory Right to Erasure under Section 12 of DPDP Act 2023 (B4.6)."""
+    if current_user.role != UserRole.PATIENT:
+        raise HTTPException(status_code=403, detail="Only patient accounts may request data erasure.")
     if not current_user.account_id:
         raise HTTPException(status_code=400, detail="Authenticated account required for data erasure.")
     from app.db import erase_account_data
@@ -1145,16 +1235,34 @@ def erase_patient_data(
 
 @app.post("/api/v1/patient/request-erasure")
 def request_erasure(req: ErasureRequest, current_user: AuthenticatedUser = Depends(get_current_user)):
-    """Legacy alias for statutory right to erasure."""
-    retention_mgr = get_retention_manager()
-    erasure_result = retention_mgr.process_patient_erasure(req.patient_id, reason=req.reason or "")
+    """Legacy alias that erases only the authenticated patient's own account."""
+    if current_user.role != UserRole.PATIENT:
+        raise HTTPException(status_code=403, detail="Only patients may request erasure of their own account.")
+    if not current_user.account_id:
+        raise HTTPException(status_code=400, detail="Authenticated patient account required for data erasure.")
+    if req.patient_id not in (current_user.account_id, current_user.user_id):
+        raise HTTPException(status_code=403, detail="The requested patient record does not belong to this account.")
+
+    from app.db import erase_account_data
+    try:
+        erase_account_data(
+            current_user.account_id,
+            reason=req.reason or "Statutory erasure requested under DPDP Act 2023",
+        )
+    except RuntimeError as exc:
+        logger.error("Patient erasure request failed for authenticated account")
+        raise HTTPException(status_code=503, detail="Patient data erasure could not be completed. Please retry.") from exc
+
     get_audit_logger().log(
         action="REQUEST_ERASURE",
-        user_id=current_user.user_id,
+        user_id=current_user.account_id,
         role=current_user.role.value,
-        details={"patient_id": req.patient_id, "reason": req.reason},
+        details={"account_id": current_user.account_id, "reason": req.reason},
     )
-    return erasure_result
+    return {
+        "status": "success",
+        "message": "Patient account data was erased or anonymized according to retention requirements.",
+    }
 
 
 @app.get("/api/v1/regulatory/positioning")
@@ -1237,6 +1345,7 @@ async def process_audio(
     known_conditions: str = Form(None, description="Optional pre-existing medical conditions"),
     current_medications: str = Form(None, description="Optional current medications"),
     profile_id: Optional[str] = Form(None, description="Optional patient profile ID (B4.2)"),
+    consent_id: Optional[str] = Form(None, description="Current-version consent record ID"),
     patient_name: Optional[str] = Form(None, description="Optional patient name"),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> PipelineResult:
@@ -1252,6 +1361,7 @@ async def process_audio(
     """
     # 1. Rate limiting & abuse defense
     await rate_limit_patient_intake(request)
+    _require_current_audio_consent(consent_id, current_user, profile_id)
 
     settings = get_settings()
     if not settings.sarvam_api_key or not settings.gemini_api_key:
@@ -1266,8 +1376,8 @@ async def process_audio(
     safe_filename = sanitize_filename(audio.filename)
     validate_audio_upload(audio_bytes, safe_filename, settings.max_audio_bytes)
 
-    # 3. Schedule raw audio deletion under temporary retention policy (default 72h)
-    get_retention_manager().schedule_audio_deletion(safe_filename, hours=settings.audio_retention_hours)
+    # Patient audio is processed from the request body and is not persisted by this app.
+    # Do not create a retention-queue row for a filename that has no backing file.
 
     # Resolve patient phone account linkage (B4.2)
     resolved_account_id = None
@@ -1319,9 +1429,9 @@ async def process_audio(
 
         # 3b. Route by complaint category and persist consultation (B5.3, B5.8, F1.1)
         try:
-            from app.routing import categorize_complaint, select_best_doctor
-            from app.db import save_consultation, save_assignment, get_staff_doctors
-
+            from app.routing import categorize_complaint, DEPARTMENT_CODES
+            from app.db import save_consultation, get_default_hospital
+            from app.specialty_validation import evaluate_specialty_holdout
             complaint_cat, dept_code, routing_rationale = categorize_complaint(
                 clinical_summary=result.clinical_summary,
                 patient_context=patient_context,
@@ -1329,40 +1439,13 @@ async def process_audio(
                 urgency_tier=result.priority.urgency_tier,
             )
 
-            from app.routing import categorize_complaint, select_best_doctor, DEPARTMENT_CODES
-            from app.db import get_staff_doctors, save_consultation, save_assignment, _MEM_HOSPITALS
-            complaint_cat, dept_code, routing_rationale = categorize_complaint(
-                clinical_summary=result.clinical_summary,
-                patient_context=patient_context,
-                safety_screening=result.safety_screening,
-                urgency_tier=result.priority.urgency_tier,
-            )
-
-            all_doctors = get_staff_doctors()
-            assigned_doc, doc_selection_rationale = select_best_doctor(
-                doctors=all_doctors,
-                department_code=dept_code,
-                patient_language=result.patient_input.language,
-            )
-            assigned_doc_id = assigned_doc.get("id") if assigned_doc else None
-
-            hosp = _MEM_HOSPITALS[0]
+            specialty_gate = evaluate_specialty_holdout()
+            if not specialty_gate["enabled"]:
+                dept_code = None
+            doc_selection_rationale = "No clinician-labeled specialty holdout has passed 90%; nurse confirmation is required."
+            hosp = get_default_hospital()
+            assigned_doc_id = None
             doc_dict = None
-            if assigned_doc:
-                doc_dict = {
-                    "id": assigned_doc.get("id"),
-                    "full_name": assigned_doc.get("full_name"),
-                    "specialty": assigned_doc.get("specialty"),
-                    "qualifications": assigned_doc.get("qualifications", "MBBS, MD"),
-                    "registration_number": assigned_doc.get("doctor_registration_number"),
-                    "state_council": assigned_doc.get("state_council"),
-                    "department_code": assigned_doc.get("department_code") or dept_code,
-                    "department_name": DEPARTMENT_CODES.get(dept_code, dept_code),
-                    "opd_room": assigned_doc.get("opd_room", "Room 101, Ground Floor OPD Block"),
-                    "schedule": assigned_doc.get("weekly_schedule"),
-                    "experience": assigned_doc.get("experience", "12 Years Clinical Practice"),
-                    "languages": assigned_doc.get("languages", ["English"]),
-                }
 
             hosp_dict = {
                 "name": hosp.get("name"),
@@ -1380,14 +1463,14 @@ async def process_audio(
 
             dept_dict = {
                 "code": dept_code,
-                "name": DEPARTMENT_CODES.get(dept_code, dept_code),
+                "name": DEPARTMENT_CODES.get(dept_code, "Manual nurse routing required") if dept_code else "Manual nurse routing required",
                 "category": complaint_cat,
                 "rationale": routing_rationale,
                 "doctor_selection_rationale": doc_selection_rationale,
             }
 
             wait_mins = 0 if result.priority.urgency_tier == "emergency" else (15 if result.priority.urgency_tier == "doctor_today" else 30)
-            token_prefix = dept_code[:3].upper()
+            token_prefix = dept_code[:3].upper() if dept_code else "TRI"
             routing_dict = {
                 "token": f"OPD-{token_prefix}-{result.request_id[-4:].upper()}",
                 "estimated_wait_minutes": wait_mins,
@@ -1401,6 +1484,7 @@ async def process_audio(
 
             stated_name = getattr(result.clinical_summary, "stated_patient_name", None) if result.clinical_summary else None
             save_consultation(result.request_id, {
+                "hospital_id": hosp["id"],
                 "account_id": patient_context.get("account_id"),
                 "profile_id": patient_context.get("profile_id"),
                 "patient_name": patient_context.get("patient_name") or stated_name,
@@ -1424,15 +1508,6 @@ async def process_audio(
                 "full_result": result.model_dump() if hasattr(result, "model_dump") else result.dict(),
             })
 
-            if assigned_doc_id:
-                save_assignment(
-                    consultation_id=result.request_id,
-                    doctor_id=assigned_doc_id,
-                    assigned_by="system_routing",
-                    status="assigned",
-                    reassignment_reason=f"{routing_rationale} {doc_selection_rationale}",
-                    locked_by_name=assigned_doc.get("full_name"),
-                )
         except Exception as route_err:
             logger.warning("Routing failed for consultation %s: %s", result.request_id, route_err)
 
@@ -1595,7 +1670,7 @@ async def voice_prescription(
 @app.post("/api/v1/export/fhir")
 async def export_fhir(
     result: PipelineResult,
-    current_user: AuthenticatedUser = Depends(require_role([UserRole.DOCTOR, UserRole.ADMIN])),
+    current_user: AuthenticatedUser = Depends(require_role([UserRole.DOCTOR, UserRole.ADMIN, UserRole.NURSE])),
 ) -> dict:
     """
     Generate and export ABDM-compliant FHIR R4 Bundle.
@@ -1652,6 +1727,7 @@ async def submit_audio_async(
     known_conditions: str = Form(None),
     current_medications: str = Form(None),
     profile_id: Optional[str] = Form(None),
+    consent_id: Optional[str] = Form(None),
     patient_name: Optional[str] = Form(None),
     latitude: Optional[float] = Form(None),
     longitude: Optional[float] = Form(None),
@@ -1668,6 +1744,8 @@ async def submit_audio_async(
     if longitude is not None and not (-180.0 <= longitude <= 180.0):
         raise HTTPException(status_code=400, detail="Longitude must be between -180 and 180 degrees.")
 
+    _require_current_audio_consent(consent_id, current_user, profile_id)
+
     settings = get_settings()
     if not settings.sarvam_api_key or not settings.gemini_api_key:
         raise HTTPException(
@@ -1679,8 +1757,8 @@ async def submit_audio_async(
     safe_filename = sanitize_filename(audio.filename)
     validate_audio_upload(audio_bytes, safe_filename, settings.max_audio_bytes)
 
-    # Schedule raw audio deletion under temporary retention policy (default 72h)
-    get_retention_manager().schedule_audio_deletion(safe_filename, hours=settings.audio_retention_hours)
+    # Patient audio is processed from the request body and is not persisted by this app.
+    # Do not create a retention-queue row for a filename that has no backing file.
 
     patient_phone = None
     if current_user.account_id:
@@ -1707,18 +1785,36 @@ async def submit_audio_async(
         "latitude": latitude,
         "longitude": longitude,
         "account_id": current_user.account_id,
+        "guest_case_id": current_user.guest_case_id,
         "user_id": current_user.user_id,
         "is_guest_emergency": current_user.role == UserRole.GUEST_EMERGENCY,
     }
 
     idempotency_key = request.headers.get("x-idempotency-key")
+    if idempotency_key and len(idempotency_key) > 200:
+        raise HTTPException(status_code=400, detail="Idempotency key is too long.")
+    if idempotency_key:
+        owner_key = current_user.account_id or current_user.guest_case_id or current_user.user_id
+        idempotency_key = f"{owner_key}:{profile_id or ''}:{idempotency_key}"
     job_mgr = get_job_manager()
     existing_job = job_mgr.get_job_by_idempotency_key(idempotency_key) if idempotency_key else None
     if existing_job and existing_job.status.value != "FAILED":
         job_id = existing_job.job_id
         is_new = False
     else:
-        job_id = job_mgr.create_job(idempotency_key=idempotency_key)
+        try:
+            job_id = job_mgr.create_job(
+                idempotency_key=idempotency_key,
+                account_id=current_user.account_id,
+                guest_case_id=current_user.guest_case_id,
+                audio_bytes=audio_bytes,
+                filename=safe_filename,
+                language_code=language_code,
+                patient_context=patient_context,
+                doctor_preferred_language=doctor_preferred_language,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail="Audio processing is temporarily unavailable. Please retry.") from exc
         is_new = True
 
     # Dispatch to background task worker if new
@@ -1750,12 +1846,23 @@ def get_job_status(
     """
     Poll stage-by-stage progress of an asynchronous consultation triage job.
     """
-    job = get_job_manager().get_job(job_id)
+    try:
+        job = get_job_manager().get_job(job_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="Pipeline job status is temporarily unavailable.") from exc
     if not job:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Job ID '{job_id}' not found or expired.",
         )
+    if current_user.role == UserRole.PATIENT:
+        if not current_user.account_id or job.account_id != current_user.account_id:
+            raise HTTPException(status_code=403, detail="Forbidden: This job does not belong to your account.")
+    elif current_user.role == UserRole.GUEST_EMERGENCY:
+        if not current_user.guest_case_id or job.guest_case_id != current_user.guest_case_id:
+            raise HTTPException(status_code=403, detail="Forbidden: This job does not belong to your emergency case.")
+    else:
+        raise HTTPException(status_code=403, detail="Only the patient who submitted audio may read its job status.")
     return job.to_response()
 
 
@@ -1774,9 +1881,18 @@ def record_consultation_action(
 @app.get("/api/v1/consultations/{consultation_id}/actions", response_model=List[ActionRecord])
 def get_consultation_action_history(
     consultation_id: str,
-    current_user: AuthenticatedUser = Depends(require_role([UserRole.DOCTOR, UserRole.ADMIN])),
+    current_user: AuthenticatedUser = Depends(require_role([UserRole.DOCTOR])),
 ):
     """Retrieve complete clinical decision and referral history for a consultation."""
+    if current_user.role == UserRole.DOCTOR:
+        if not current_user.is_verified_doctor:
+            raise HTTPException(status_code=403, detail="Verified clinician registration is required to access clinical actions.")
+        from app.db import get_assignment_for_consultation, get_consultation
+        if not get_consultation(consultation_id):
+            raise HTTPException(status_code=404, detail="Consultation not found.")
+        assignment = get_assignment_for_consultation(consultation_id)
+        if not assignment or assignment.get("doctor_id") != current_user.user_id:
+            raise HTTPException(status_code=403, detail="Forbidden: Case is assigned to another clinician.")
     return get_clinical_action_manager().get_consultation_actions(consultation_id)
 
 
@@ -1820,17 +1936,18 @@ def check_in_consultation(
     Record patient 2 to 3 day follow-up check-in ('improving', 'same', 'worse').
     Automatically escalates urgency tier if 'worse' is reported.
     """
-    if current_user.role in (UserRole.NURSE, UserRole.ADMIN):
-        raise HTTPException(status_code=403, detail="Forbidden: Hospital staff cannot record patient self-check-ins.")
-    if current_user.role == UserRole.GUEST_EMERGENCY and current_user.guest_case_id != consultation_id:
-        raise HTTPException(status_code=403, detail="Forbidden: Guest emergency access restricted to own case.")
+    if current_user.role not in (UserRole.PATIENT, UserRole.GUEST_EMERGENCY):
+        raise HTTPException(status_code=403, detail="Forbidden: Only patients may record patient self-check-ins.")
 
     from app.db import get_consultation
     consultation = get_consultation(consultation_id)
-    if consultation:
-        if current_user.role == UserRole.PATIENT:
-            if consultation.get("account_id") and consultation.get("account_id") != current_user.account_id:
-                raise HTTPException(status_code=403, detail="Forbidden: You cannot check-in for another patient's consultation.")
+    if not consultation:
+        raise HTTPException(status_code=404, detail="Consultation not found.")
+    if current_user.role == UserRole.PATIENT:
+        if not current_user.account_id or consultation.get("account_id") != current_user.account_id:
+            raise HTTPException(status_code=403, detail="Forbidden: You cannot check-in for another patient's consultation.")
+    elif current_user.guest_case_id != consultation_id:
+        raise HTTPException(status_code=403, detail="Forbidden: Guest emergency access is restricted to its own case.")
 
     response = get_follow_up_manager().record_check_in(
         consultation_id=consultation_id,
@@ -1863,17 +1980,18 @@ def escalate_consultation(
     Immediately escalates the patient up one urgency tier:
       self_care -> doctor_soon -> doctor_today -> emergency
     """
-    if current_user.role in (UserRole.NURSE, UserRole.ADMIN):
-        raise HTTPException(status_code=403, detail="Forbidden: Hospital staff cannot trigger patient self-escalation.")
-    if current_user.role == UserRole.GUEST_EMERGENCY and current_user.guest_case_id != consultation_id:
-        raise HTTPException(status_code=403, detail="Forbidden: Guest emergency access restricted to own case.")
+    if current_user.role not in (UserRole.PATIENT, UserRole.GUEST_EMERGENCY):
+        raise HTTPException(status_code=403, detail="Forbidden: Only patients may trigger patient self-escalation.")
 
     from app.db import get_consultation
     consultation = get_consultation(consultation_id)
-    if consultation:
-        if current_user.role == UserRole.PATIENT:
-            if consultation.get("account_id") and consultation.get("account_id") != current_user.account_id:
-                raise HTTPException(status_code=403, detail="Forbidden: You cannot escalate another patient's consultation.")
+    if not consultation:
+        raise HTTPException(status_code=404, detail="Consultation not found.")
+    if current_user.role == UserRole.PATIENT:
+        if not current_user.account_id or consultation.get("account_id") != current_user.account_id:
+            raise HTTPException(status_code=403, detail="Forbidden: You cannot escalate another patient's consultation.")
+    elif current_user.guest_case_id != consultation_id:
+        raise HTTPException(status_code=403, detail="Forbidden: Guest emergency access is restricted to its own case.")
 
     reason = req.reason if req and req.reason else "Patient initiated one-tap 'I feel worse' escalation."
     response = get_follow_up_manager().escalate_tier(
@@ -1902,6 +2020,8 @@ def get_patient_check_in_prompts(
     Check if any 2-3 day follow-up check-ins are due for this patient account (B6.5).
     Used to show prompt banners or modals upon app opening.
     """
+    if current_user.role != UserRole.PATIENT or not current_user.account_id:
+        raise HTTPException(status_code=403, detail="Only authenticated patient accounts may view their check-in prompts.")
     from app.db import get_profiles_for_account
     profile_ids = []
     if current_user.account_id:
@@ -1919,7 +2039,7 @@ def process_due_follow_up_notifications(
     current_user: AuthenticatedUser = Depends(require_role([UserRole.ADMIN, UserRole.DOCTOR])),
 ):
     """
-    Scheduler endpoint to trigger automated SMS dispatch for overdue check-ins (B6.5).
+    Returns in-app due check-ins; no outbound notifications are sent.
     """
     dispatched_count = get_follow_up_manager().dispatch_due_check_in_notifications()
     return {"status": "success", "dispatched_notifications": dispatched_count}
@@ -2014,21 +2134,25 @@ def get_consultation_voice_thread(
     """
     Retrieve asynchronous two-way bilingual voice thread messages.
     """
-    if current_user.role in (UserRole.NURSE, UserRole.ADMIN):
-        raise HTTPException(status_code=403, detail="Forbidden: Nurses and admins cannot access clinical voice threads.")
-    if current_user.role == UserRole.GUEST_EMERGENCY and current_user.guest_case_id != consultation_id:
-        raise HTTPException(status_code=403, detail="Forbidden: Guest emergency access restricted to own case.")
+    if current_user.role not in (UserRole.PATIENT, UserRole.GUEST_EMERGENCY, UserRole.DOCTOR):
+        raise HTTPException(status_code=403, detail="Forbidden: This role cannot access clinical voice threads.")
+    if current_user.role == UserRole.DOCTOR and not current_user.is_verified_doctor:
+        raise HTTPException(status_code=403, detail="Verified clinician registration is required to access clinical voice threads.")
 
     from app.db import get_consultation, get_assignment_for_consultation
     consultation = get_consultation(consultation_id)
-    if consultation:
-        if current_user.role == UserRole.PATIENT:
-            if consultation.get("account_id") and consultation.get("account_id") != current_user.account_id:
-                raise HTTPException(status_code=403, detail="Forbidden: You cannot access another patient's voice thread.")
-        elif current_user.role == UserRole.DOCTOR:
-            assignment = get_assignment_for_consultation(consultation_id)
-            if assignment and assignment.get("doctor_id") and assignment.get("doctor_id") != current_user.user_id:
-                raise HTTPException(status_code=403, detail="Forbidden: Case is assigned to another clinician.")
+    if not consultation:
+        raise HTTPException(status_code=404, detail="Consultation not found.")
+    if current_user.role == UserRole.PATIENT:
+        if not current_user.account_id or consultation.get("account_id") != current_user.account_id:
+            raise HTTPException(status_code=403, detail="Forbidden: You cannot access another patient's voice thread.")
+    elif current_user.role == UserRole.GUEST_EMERGENCY:
+        if current_user.guest_case_id != consultation_id:
+            raise HTTPException(status_code=403, detail="Forbidden: Guest emergency access is restricted to its own case.")
+    else:
+        assignment = get_assignment_for_consultation(consultation_id)
+        if not assignment or assignment.get("doctor_id") != current_user.user_id:
+            raise HTTPException(status_code=403, detail="Forbidden: Case is assigned to another clinician.")
 
     return get_voice_thread_manager().get_or_create_thread(consultation_id)
 
@@ -2053,7 +2177,7 @@ async def patient_voice_reply(
         raise HTTPException(status_code=404, detail=f"Consultation '{consultation_id}' not found.")
 
     if current_user.role == UserRole.PATIENT:
-        if consultation.get("account_id") and consultation.get("account_id") != current_user.account_id:
+        if not current_user.account_id or consultation.get("account_id") != current_user.account_id:
             raise HTTPException(status_code=403, detail="Forbidden: You cannot reply to another patient's thread.")
     elif current_user.role == UserRole.GUEST_EMERGENCY:
         if current_user.guest_case_id != consultation_id:
@@ -2153,17 +2277,106 @@ def get_doctor_queue(
     Sorted urgent-first: emergency (0) > doctor_today (1) > doctor_soon (2) > self_care (3).
     Includes atomic claim lock statuses, wait times, and complaint categorization.
     """
-    from app.db import list_consultations_for_queue
+    if current_user.role == UserRole.DOCTOR and not current_user.is_verified_doctor:
+        raise HTTPException(status_code=403, detail="Verified clinician registration is required to access the consultation queue.")
+    from app.db import list_consultations_for_queue, get_default_hospital_id
     results = list_consultations_for_queue(
         department_code=department,
         tier=tier,
         status=status,
         search=search,
+        doctor_id=current_user.user_id if current_user.role == UserRole.DOCTOR else None,
+        hospital_id=current_user.hospital_id or get_default_hospital_id(),
     )
+    if current_user.role == UserRole.ADMIN:
+        results = [{k: v for k, v in c.items() if k not in {"result", "full_result", "symptoms", "chief_complaint", "clinical_summary", "transcript_original", "transcript_english", "original_transcript", "english_transcript", "clinical_notes", "prescriptions"}} for c in results]
+    elif current_user.role == UserRole.NURSE:
+        safe_results = []
+        for c in results:
+            row = dict(c)
+            summary = ((row.get("full_result") or {}).get("clinical_summary") or {})
+            row["symptom_summary"] = summary.get("symptoms") or row.get("symptoms") or []
+            row["relevant_history"] = {k: summary.get(k, []) for k in ("existing_conditions", "medications", "allergies")}
+            for field in ("result", "full_result", "transcript_original", "transcript_english", "original_transcript", "english_transcript", "clinical_notes", "prescriptions"):
+                row.pop(field, None)
+            safe_results.append(row)
+        results = safe_results
     return {
         "count": len(results),
         "consultations": results,
     }
+
+
+@app.get("/api/v1/admin/cases")
+def get_admin_operational_cases(
+    search: Optional[str] = None,
+    current_user: AuthenticatedUser = Depends(require_role([UserRole.ADMIN])),
+):
+    """Operational case and patient feedback view. Never returns transcripts or clinical notes."""
+    from app.db import list_consultations_for_queue, list_follow_up_records, get_assignment_for_consultation, get_assignment_history, find_staff_user, append_audit_log_entry
+    hospital_id = current_user.hospital_id
+    if not hospital_id:
+        from app.db import get_default_hospital_id
+        hospital_id = get_default_hospital_id()
+    cases = list_consultations_for_queue(hospital_id=hospital_id)
+    feedback = {}
+    for item in list_follow_up_records():
+        feedback.setdefault(item.get("consultation_id"), []).append({
+            "patient_status": item.get("patient_status"),
+            "patient_feedback": item.get("patient_feedback"),
+            "checked_in_at": item.get("checked_in_at"),
+            "scheduled_for": item.get("scheduled_for"),
+        })
+    output = []
+    q = (search or "").strip().lower()
+    for c in cases:
+        assignment = get_assignment_for_consultation(c["id"])
+        assignment_history = get_assignment_history(c["id"])
+        doctor_id = (assignment or {}).get("doctor_id") or c.get("assigned_doctor_id")
+        doctor = find_staff_user(doctor_id) if doctor_id else None
+        row = {
+            "id": c.get("id"),
+            "patient_name": c.get("patient_name") or c.get("guest_name") or "Patient",
+            "patient_id": c.get("account_id") or c.get("profile_id"),
+            "assigned_doctor": (doctor or {}).get("full_name") or doctor_id,
+            "assigned_doctor_id": doctor_id,
+            "assignment": ({k: assignment.get(k) for k in ("assigned_by", "status", "created_at", "claimed_at", "released_at")} if assignment else None),
+            "assignment_history": [{k: entry.get(k) for k in ("assigned_by", "status", "created_at", "claimed_at", "released_at")} for entry in assignment_history],
+            "status": c.get("status"),
+            "urgency_tier": c.get("urgency_tier"),
+            "department_id": c.get("department_id"),
+            "created_at": c.get("created_at"),
+            "updated_at": c.get("updated_at"),
+            "feedback": feedback.get(c.get("id"), []),
+        }
+        if q and not any(q in str(row.get(k) or "").lower() for k in ("id", "patient_name", "patient_id", "assigned_doctor", "status", "department_id")):
+            continue
+        output.append(row)
+    append_audit_log_entry(action="ADMIN_OPERATIONAL_CASES_READ", user_id=current_user.user_id, role="admin", details={"search": bool(q), "returned_count": len(output)})
+    return {"count": len(output), "cases": output}
+
+
+@app.get("/api/v1/consultations/{consultation_id}/routing-suggestion")
+def get_nurse_routing_suggestion(
+    consultation_id: str,
+    current_user: AuthenticatedUser = Depends(require_role([UserRole.NURSE])),
+):
+    """Provide a gated specialty suggestion; human nurse confirmation remains required."""
+    from app.db import get_consultation, get_staff_doctors, get_default_hospital_id
+    from app.specialty_validation import recommend_department
+    case = get_consultation(consultation_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Consultation not found.")
+    hospital_id = current_user.hospital_id or get_default_hospital_id()
+    if case.get("hospital_id") != hospital_id:
+        raise HTTPException(status_code=403, detail="Case belongs to another hospital.")
+    suggestion = recommend_department(case)
+    doctors = []
+    if suggestion["enabled"]:
+        doctors = get_staff_doctors(department_code=suggestion["department_code"], on_duty_only=True, hospital_id=hospital_id)
+    suggestion["eligible_doctors"] = [{"id": d.get("id"), "full_name": d.get("full_name"), "specialty": d.get("specialty"), "languages": d.get("languages", [])} for d in doctors]
+    suggestion["human_confirmation_required"] = True
+    return suggestion
 
 
 @app.get("/api/v1/consultations/{consultation_id}")
@@ -2177,7 +2390,7 @@ def get_consultation_details(
       - Patients can only view their own account's consultations (H3.1).
       - Guests can only view their own single emergency case (H1.3).
       - Doctors can only view their assigned cases or unclaimed cases (H3.2).
-      - Doctors get masked phone numbers; nurses and admins receive no clinical text (H3.3).
+      - Nurses receive symptom summaries for routing, but no transcripts; admins receive operational data only.
       - Every read writes an append-only audit trail record (H3.8).
     """
     from app.db import get_consultation, get_assignment_for_consultation
@@ -2188,7 +2401,7 @@ def get_consultation_details(
     assignment = get_assignment_for_consultation(consultation_id)
 
     if current_user.role == UserRole.PATIENT:
-        if consultation_raw.get("account_id") and consultation_raw.get("account_id") != current_user.account_id:
+        if not current_user.account_id or consultation_raw.get("account_id") != current_user.account_id:
             raise HTTPException(status_code=403, detail="Unauthorized: Access denied to other patient records.")
 
     elif current_user.role == UserRole.GUEST_EMERGENCY:
@@ -2196,16 +2409,26 @@ def get_consultation_details(
             raise HTTPException(status_code=403, detail="Unauthorized: Guest emergency access is restricted to the generated emergency case.")
 
     elif current_user.role == UserRole.DOCTOR:
-        if assignment and assignment.get("doctor_id") and assignment.get("doctor_id") != current_user.user_id:
+        if not current_user.is_verified_doctor:
+            raise HTTPException(status_code=403, detail="Verified clinician registration is required to access clinical records.")
+        if not assignment or assignment.get("doctor_id") != current_user.user_id:
             raise HTTPException(status_code=403, detail="Forbidden: Case is assigned to another clinician.")
+
+    elif current_user.role in (UserRole.NURSE, UserRole.ADMIN):
+        from app.db import get_default_hospital_id
+        expected_hospital = current_user.hospital_id or get_default_hospital_id()
+        if consultation_raw.get("hospital_id") != expected_hospital:
+            raise HTTPException(status_code=403, detail="Forbidden: Case belongs to another hospital.")
 
     consultation = dict(consultation_raw)
     consultation["assignment"] = assignment
+    if current_user.role == UserRole.ADMIN and assignment:
+        consultation["assignment"] = {k: assignment.get(k) for k in ("assigned_by", "status", "created_at", "claimed_at", "released_at")}
 
     # Attach rich doctor, hospital, and routing details
-    from app.db import get_staff_doctors, _MEM_HOSPITALS
+    from app.db import get_staff_doctors, get_default_hospital
     from app.routing import DEPARTMENT_CODES
-    hosp = _MEM_HOSPITALS[0]
+    hosp = get_default_hospital()
     if "hospital" not in consultation or not consultation["hospital"]:
         consultation["hospital"] = {
             "name": hosp.get("name"),
@@ -2224,7 +2447,7 @@ def get_consultation_details(
     doc_id = consultation.get("assigned_doctor_id") or (assignment.get("doctor_id") if assignment else None)
     if "assigned_doctor" not in consultation or not consultation["assigned_doctor"]:
         if doc_id:
-            docs = get_staff_doctors()
+            docs = get_staff_doctors(hospital_id=hosp["id"])
             match = next((d for d in docs if d.get("id") == doc_id or d.get("email") == doc_id), None)
             if match:
                 dept_c = match.get("department_code") or consultation.get("department_id", "GEN_MED")
@@ -2266,10 +2489,22 @@ def get_consultation_details(
         phone = consultation.get("phone_number")
         if phone:
             consultation["phone_number"] = phone[:3] + "****" + phone[-2:]
-    elif current_user.role in (UserRole.NURSE, UserRole.ADMIN):
-        # Strip clinical text for nurses and admins
-        for field in ("transcript_original", "transcript_english", "symptoms", "chief_complaint", "clinical_summary"):
+    elif current_user.role == UserRole.NURSE:
+        summary = (consultation.get("full_result") or {}).get("clinical_summary") or {}
+        consultation["symptom_summary"] = summary.get("symptoms") or consultation.get("symptoms") or []
+        consultation["relevant_history"] = {k: summary.get(k, []) for k in ("existing_conditions", "medications", "allergies")}
+        # Nurses need concise symptom details to route cases, but not source transcripts or clinical impressions.
+        for field in ("transcript_original", "transcript_english", "original_transcript", "english_transcript", "chief_complaint", "result", "full_result"):
             consultation.pop(field, None)
+    elif current_user.role == UserRole.ADMIN:
+        # Operational admin access deliberately excludes all clinical content.
+        for field in ("transcript_original", "transcript_english", "original_transcript", "english_transcript", "symptoms", "chief_complaint", "clinical_summary", "result", "full_result", "clinical_notes", "prescriptions"):
+            consultation.pop(field, None)
+        consultation.pop("phone_number", None)
+        if isinstance(consultation.get("department"), dict):
+            consultation["department"] = {k: v for k, v in consultation["department"].items() if k not in ("rationale", "doctor_selection_rationale")}
+        if isinstance(consultation.get("routing"), dict):
+            consultation["routing"] = {k: v for k, v in consultation["routing"].items() if k not in ("rationale", "doctor_selection_rationale")}
 
     get_audit_logger().log(
         action="CONSULTATION_READ",
@@ -2331,18 +2566,27 @@ def release_consultation_case(
 def reassign_consultation_case(
     consultation_id: str,
     req: ReassignCaseRequest,
-    current_user: AuthenticatedUser = Depends(require_role([UserRole.DOCTOR, UserRole.ADMIN])),
+    current_user: AuthenticatedUser = Depends(require_role([UserRole.DOCTOR, UserRole.ADMIN, UserRole.NURSE])),
 ):
     """
     Reassign case to another doctor or department with mandatory clinical reason (B5.6, B5.7).
     """
-    from app.db import reassign_consultation
+    from app.db import reassign_consultation, get_consultation, get_default_hospital_id
+    if current_user.role == UserRole.DOCTOR and not current_user.is_verified_doctor:
+        raise HTTPException(status_code=403, detail="Verified clinician registration is required to reassign cases.")
+    consultation = get_consultation(consultation_id)
+    if not consultation:
+        raise HTTPException(status_code=404, detail="Consultation not found.")
+    expected_hospital = current_user.hospital_id or get_default_hospital_id()
+    if consultation.get("hospital_id") != expected_hospital:
+        raise HTTPException(status_code=403, detail="Case belongs to another hospital.")
     success, message, assignment = reassign_consultation(
         consultation_id=consultation_id,
         reassigning_doctor_id=current_user.user_id,
         target_doctor_id=req.target_doctor_id,
         target_department_code=req.target_department,
         reason=req.reason,
+        assigning_role=current_user.role.value,
     )
     if not success:
         raise HTTPException(status_code=400, detail=message)
@@ -2410,8 +2654,13 @@ def get_doctor_roster(
     """
     Retrieve hospital doctor roster with specialty, schedule, capacity and duty status (B5.1, F4.2).
     """
-    from app.db import get_staff_doctors
-    doctors = get_staff_doctors(department_code=department, on_duty_only=on_duty_only)
+    from app.db import get_staff_doctors, get_default_hospital_id
+    hospital_id = current_user.hospital_id or get_default_hospital_id()
+    doctors = get_staff_doctors(
+        department_code=department,
+        on_duty_only=on_duty_only,
+        hospital_id=hospital_id,
+    )
     sanitized = []
     for d in doctors:
         doc_copy = dict(d)
@@ -2457,6 +2706,8 @@ def verify_doctor_registration(
         doctor_id=doctor_id,
         admin_user_id=current_admin.user_id,
     )
+    if not success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Doctor account not found.")
     return {
         "success": success,
         "message": f"Doctor registration credentials verified by hospital administrator {current_admin.user_id}.",
@@ -2468,8 +2719,10 @@ def trigger_unclaimed_escalations(
     current_user: AuthenticatedUser = Depends(require_role([UserRole.DOCTOR, UserRole.ADMIN])),
 ):
     """
-    Trigger automatic escalation check for unclaimed cases exceeding timer limits (B5.5).
+    Evaluate overdue cases; emergency cases still require manual human follow-up.
     """
+    if current_user.role == UserRole.DOCTOR and not current_user.is_verified_doctor:
+        raise HTTPException(status_code=403, detail="Verified clinician registration is required to review overdue cases.")
     from app.db import get_unclaimed_consultations_for_escalation
     escalations = get_unclaimed_consultations_for_escalation()
     return {

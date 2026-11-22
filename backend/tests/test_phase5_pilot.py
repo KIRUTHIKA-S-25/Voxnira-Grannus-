@@ -112,8 +112,11 @@ def test_job_manager_lifecycle():
 
 def test_job_status_api_endpoints():
     mgr = get_job_manager()
-    job_id = mgr.create_job()
-    token = create_token("test_doc_01", UserRole.DOCTOR, doctor_reg_no="TNMC-54321")
+    account_id = "66666666-0000-0000-0000-000000000006"
+    job_id = mgr.create_job(account_id=account_id)
+    # Simulate a different worker loading the job from persisted storage.
+    mgr._jobs.pop(job_id)
+    token = create_token("test_patient_job_01", UserRole.PATIENT, account_id=account_id)
     headers = {"Authorization": f"Bearer {token}"}
 
     # Query existing job
@@ -123,7 +126,24 @@ def test_job_status_api_endpoints():
     assert data["job_id"] == job_id
     assert data["status"] == "QUEUED"
 
-    # Query non-existent job -> 404
+    # Another account and staff roles cannot read this patient's job.
+    other_token = create_token(
+        "test_patient_job_02", UserRole.PATIENT,
+        account_id="77777777-0000-0000-0000-000000000007",
+    )
+    res_other = client.get(
+        f"/api/v1/pipeline/job-status/{job_id}",
+        headers={"Authorization": f"Bearer {other_token}"},
+    )
+    assert res_other.status_code == 403
+    doctor_token = create_token("test_doc_01", UserRole.DOCTOR, doctor_reg_no="TNMC-54321")
+    res_doctor = client.get(
+        f"/api/v1/pipeline/job-status/{job_id}",
+        headers={"Authorization": f"Bearer {doctor_token}"},
+    )
+    assert res_doctor.status_code == 403
+
+    # Query non-existent job -> 404 for the owner.
     res_404 = client.get("/api/v1/pipeline/job-status/non_existent_job_123", headers=headers)
     assert res_404.status_code == 404
 
@@ -145,6 +165,12 @@ def test_async_submit_audio_endpoint():
     # Authenticated call
     patient_token = create_token("patient_test_01", UserRole.PATIENT, phone_number="+919876543210")
     headers = {"Authorization": f"Bearer {patient_token}"}
+    consent_res = client.post(
+        "/api/v1/consent/record", headers=headers,
+        json={"language_code": "hi-IN", "explicit_consent": True},
+    )
+    assert consent_res.status_code == 200
+    form_data["consent_id"] = consent_res.json()["consent_id"]
     file_payload_2 = {"audio": ("sample_consultation.wav", io.BytesIO(SAMPLE_WAV_HEADER), "audio/wav")}
     res = client.post("/api/v1/pipeline/submit-audio", files=file_payload_2, data=form_data, headers=headers)
     assert res.status_code == 202
@@ -182,11 +208,21 @@ def test_telehealth_clinical_action_permissions():
 
 
 def test_telehealth_doctor_action_and_history():
+    from app.db import save_consultation, save_assignment
+    save_consultation("c_rural_42", {"urgency_tier": "emergency", "status": "triage"})
+    save_assignment(
+        consultation_id="c_rural_42",
+        doctor_id="dr_subramaniam",
+        assigned_by="system",
+        status="assigned",
+        reassignment_reason="Emergency evaluation",
+    )
     doc_token = create_token(
         user_id="dr_subramaniam",
         role=UserRole.DOCTOR,
         doctor_reg_no="TNMC-77889",
         state_council="Tamil Nadu Medical Council",
+        is_verified_doctor=True,
     )
 
     action_payload = {

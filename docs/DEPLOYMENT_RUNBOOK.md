@@ -2,7 +2,7 @@
 
 **System Version:** 2.0.0-production  
 **Target Environments:** Primary Health Centres (PHC), Community Health Centres (CHC), Sub-Centres (Ayushman Arogya Mandir)  
-**Security Level:** Production Healthcare Architecture (DPDP Act 2023 & Telemedicine Practice Guidelines 2020 Compliant)
+**Status:** Deployment runbook and technical controls; not a legal or clinical compliance certification
 
 ---
 
@@ -18,7 +18,7 @@
 ┌────────────────────────────────────────────────────────────────────────┐
 │                     FRONTEND WEB CLIENT (Next.js 16)                   │
 │   - Mobile PWA Interface for Village Health Workers (ASHAs / ANMs)     │
-│   - Offline IndexedDB Queue for low-connectivity rural areas           │
+│   - In-memory audio submission; browser storage is not used for audio  │
 │   - Doctor Telehealth Triage Portal with RMP Registration Verification │
 └──────────────────────────────────┬─────────────────────────────────────┘
                                    │ REST APIs / HTTPS
@@ -29,17 +29,17 @@
 │   - Sarvam AI Speech-to-Text & Text-to-Speech (Saaras/Bulbul)          │
 │   - Gemini 2.5 LLM Clinical Extraction & Decision Support Assist       │
 │   - Deterministic Red-Flag Safety Engine & Priority Floor Classifier   │
-│   - Multi-Profile Phone OTP Service & Caregiver Role Isolation         │
-│   - 72-Hour Raw Voice Expiry & Cryptographic Shredding Worker          │
+│   - Multi-Profile Phone + PIN Sign-In & Caregiver Role Isolation       │
+│   - Legacy filesystem-audio cleanup worker                             │
 └──────────────────────────────────┬─────────────────────────────────────┘
                                    │ Encrypted SQL & Storage APIs
                                    ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │                 SUPABASE INFRASTRUCTURE (PostgreSQL)                  │
 │   - Row Level Security (RLS) on all patient & clinical tables          │
-│   - Encrypted PHI Fields (AES-CBC / Fernet envelope encryption)        │
+│   - AES-GCM encryption on supported persistence paths (legacy PHI backfill required) │
 │   - Immutable Audit Logging (`audit_logs`)                             │
-│   - Storage Buckets: `audio-consultations` (72h retention lifecycle)   │
+│   - Patient upload audio is transient; legacy filesystem queue is swept │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -47,9 +47,9 @@
 
 ## 2. Environment Configuration Checklist
 
-### 2.1 Backend (`backend/.env`)
+### 2.1 Docker deployment environment (`.env` at repository root)
 
-Ensure the following variables are defined before launching the container:
+Docker Compose reads the root `.env` file. Start from the root `.env.example`, replace every placeholder, and keep secret values in the deployment secret store for hosted environments. `backend/.env` is read when running the Python service directly, outside Compose.
 
 | Variable | Requirement | Description |
 |---|---|---|
@@ -58,27 +58,53 @@ Ensure the following variables are defined before launching the container:
 | `GEMINI_API_KEY` | Required | Google Gemini API credentials for clinical summarization |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | Primary clinical decision support LLM model |
 | `SUPABASE_URL` | Required | Supabase PostgreSQL project URL |
-| `SUPABASE_ANON_KEY` | Required | Supabase anon key for public endpoints |
+| `DEFAULT_HOSPITAL_ID` | Required (UUID) | Hospital row in this Supabase project used for intake and doctor routing; startup verifies it exists |
+| `SUPABASE_ANON_KEY` | Optional in production backend | Only used for non-production backend fallback; public client access uses the frontend's publishable/anon key |
 | `SUPABASE_SERVICE_ROLE_KEY` | Required (Backend Only) | Elevated backend key for bypassing RLS in background jobs |
 | `JWT_SECRET_KEY` | Required (>= 32 chars) | Secret key for signing clinician & patient session JWTs |
-| `PHI_ENCRYPTION_KEY` | Required (32-byte base64) | Key used for encrypting patient names and phone numbers |
-| `AUDIO_RETENTION_HOURS` | `72` | DPDP Act 2023 maximum raw voice retention window |
-| `SMS_PROVIDER` | `msg91` / `twilio` | Gateway for sending patient consultation SMS notifications |
+| `PHI_ENCRYPTION_KEY` | Required (>= 32 random characters) | Stable key for versioned AES-GCM field encryption and keyed lookup hashes; losing or changing it makes stored protected values unreadable |
+| `AUDIO_RETENTION_HOURS` | `72` | Expiry window used by the legacy filesystem-audio cleanup queue; current patient uploads are not persisted by the app |
 | `ALLOW_DEV_OTP` | `false` | MUST BE `false` in production to prevent bypass |
+| `ALLOWED_ORIGINS` | Required | Comma-separated HTTPS origins for deployed frontend; localhost origins are rejected in production |
+| `GRIEVANCE_OFFICER_NAME` | Required | Actual designated grievance officer name returned by the backend consent notice |
+| `GRIEVANCE_OFFICER_EMAIL` | Required | Actual designated grievance contact returned by the backend consent notice |
 
-### 2.2 Frontend (`frontend/.env.local`)
+Before launch, verify the Sarvam workspace's data-retention setting and model-training preference with the account owner. Sarvam documents workspace-level retention controls and an opt-in default for model improvement; an API key alone does not prove zero retention or training opt-out. See the [Sarvam API FAQ](https://docs.sarvam.ai/api/platform/faq) and [Sarvam privacy policy](https://www.sarvam.ai/privacy-policy), then apply the settings and terms agreed for this deployment.
+
+### 2.2 Frontend build variables (root `.env`)
 
 | Variable | Requirement | Description |
 |---|---|---|
 | `NEXT_PUBLIC_API_URL` | `https://api.yourdomain.org` | Backend FastAPI base URL |
 | `NEXT_PUBLIC_SUPABASE_URL` | `https://your-project.supabase.co` | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Required (Public) | Supabase anon public key |
+| `NEXT_PUBLIC_GRIEVANCE_OFFICER_EMAIL` | Required | Actual public grievance contact displayed in the consent dialog; must match backend configuration |
+
+Set all `NEXT_PUBLIC_*` values in the root `.env` before building the frontend image. Next.js compiles them into the browser bundle; changing only container runtime variables does not update them. The provided Supabase project URL is `https://cvnuaxcyadfycsfkeftu.supabase.co`.
+
+Outbound SMS is disabled. Patient authentication uses phone number and PIN. Emergency pages instruct patients to call 108 or 112 directly; the application does not message emergency contacts or dispatch emergency services.
 
 ---
 
 ## 3. Database Migration & RLS Deployment
 
-Run all migration scripts in `supabase/migrations/` sequentially via Supabase CLI or PostgreSQL SQL editor:
+The live project and this checkout currently have migration-history drift. A read-only comparison on 2026-11-21 found seven versions recorded remotely but missing from `supabase/migrations/`:
+
+| Remote version | Recorded name |
+|---|---|
+| `20260831171351` | `init_grannus_schema` |
+| `20260901155750` | `add_pipeline_results_table` |
+| `20260901155828` | `enable_rls_with_anon_policies` |
+| `20261004163330` | `multi_tenant_core_schema_and_persistence` |
+| `20261004165817` | `backend_access_policies_for_persistence_tables` |
+| `20261004171200` | `enhance_consents_table_with_version_and_metadata` |
+| `20261005171612` | `add_guest_cases_and_deletion_log` |
+
+This checkout also has three older migration files that are not recorded remotely: `20261006_row_level_security.sql`, `20261118_staff_lockouts_and_sos.sql`, and `20261120_patient_phone_pin_auth.sql`. The 19 migrations dated `20261121073314` through `20261121111639` are recorded remotely and have matching local files. Three newer migrations are local only and have not been applied to the live database: `20261121132640_consent_owner_links.sql`, `20261121133800_sos_recording_semantics.sql`, and `20261121134500_pipeline_job_owner_links.sql`. Consent creation/audio submission, accurate SOS status reporting, and guest job ownership require these migrations.
+
+`supabase/schema_snapshot.sql` captures the current public schema for recovery/reference, but is explicitly not a clean-install migration. Do not run `supabase db push` against the linked project or a fresh project until the history is reconciled: the CLI could attempt the three local-only files against the live database, while a fresh project lacks the seven historical schema changes. Recover the original SQL from its source of truth, or agree on and verify a baseline-and-history-repair procedure against a disposable project first. Do not repair remote migration history or replay old migrations against production as an ad hoc fix.
+
+After the local and remote histories match, apply only reviewed forward migrations and verify the recorded history before deployment. The following command is for a synchronized local history only:
 
 ```bash
 # 1. Apply schema and tables
@@ -88,11 +114,15 @@ supabase db push
 SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname = 'public';
 ```
 
-Required active policies:
-- `consultations`: Read/write locked to owning user profile or assigned doctor.
-- `patient_profiles`: Read/write locked to primary account phone owner.
-- `doctor_queue_assignments`: Locked to verified medical officers.
-- `audit_logs`: Append-only, doctor/admin read-only.
+The current client policy is deny-by-default for sensitive tables: `anon` and `authenticated` have no table privileges or policies there. Only `hospitals` and `departments` are publicly readable. The backend uses the Supabase service-role key and enforces application authorization; never expose that key to the frontend. Add user-scoped RLS policies before allowing direct authenticated client access to patient data.
+
+The application encrypts newly written values, but the live database still contains legacy plaintext phone numbers, profile names, and consultation transcripts. Take a verified database backup, set the same long-lived `PHI_ENCRYPTION_KEY` that the application will use, and run `python scripts/backfill_phi_encryption.py --dry-run` from `backend/` followed by `python scripts/backfill_phi_encryption.py`. Rerun until the script reports zero rows to update. Preserve that key and coordinate any future rotation with a migration that re-encrypts data and recomputes phone lookup hashes.
+
+The backfill includes the patient, OTP, consultation, clinical-summary, pipeline-result, follow-up, assignment, audit, deletion, location, SOS, and audio-retention fields represented in the current schema. Review any schema extensions or tables added later; this is a versioned field inventory, not automatic encryption of arbitrary database columns.
+
+### 3.1 Durable consultation processing (release blocker)
+
+`POST /api/v1/pipeline/process-audio` currently starts processing with an in-process `asyncio.create_task`. Job progress is persisted in Supabase, but the uploaded audio and executable work item are not stored in a durable queue. If the serving worker exits after accepting the request, the job can remain queued or in progress without a worker able to resume it. The Docker backend also starts multiple Uvicorn workers, while each worker owns separate in-memory job and rate-limit state. Do not deploy this flow for clinical use until processing is moved to a durable queue with recoverable encrypted audio or the API is changed to report completion only after processing; verify restart, duplicate submission, and cross-worker polling behavior before release.
 
 ---
 
@@ -115,43 +145,34 @@ docker compose logs -f frontend
 
 ### 4.2 Verifying Container Health
 ```bash
-# Check backend health
+# Check backend liveness
 curl -f http://localhost:8000/health
+
+# Check backend readiness
+curl -f http://localhost:8000/ready
 
 # Check metrics
 curl -f http://localhost:8000/api/v1/metrics
 ```
 
-Expected `/health` response:
+`/health` is a liveness response (it does not assert database connectivity). It returns:
 ```json
 {
-  "status": "healthy",
-  "version": "2.0.0",
-  "environment": "production",
-  "storage": "connected"
+  "status": "ok",
+  "sarvam_key_configured": true,
+  "gemini_key_configured": true,
+  "audio_preprocessing_enabled": true,
+  "ml_model_loaded": true
 }
 ```
 
 ---
 
-## 5. Background Retention Worker Setup (DPDP Act 2023)
+## 5. Audio Processing and Provider Retention
 
-In accordance with Section 8(7) of the Digital Personal Data Protection Act 2023, raw patient voice recordings must be permanently shredded after 72 hours.
+Patient uploads are sent to Sarvam AI for transcription. The app processes the upload from the request body and does not persist a raw audio file. The hourly worker remains for legacy paths already recorded in `audio_retention_queue`; it does not control Sarvam's retention and does not delete Supabase Storage objects. The consent notice describes these boundaries. Configure and verify the provider-side retention and model-training settings separately.
 
-Configure an hourly cron job (or cloud scheduler like AWS EventBridge / Cloudflare Worker / GitHub Actions) to trigger the retention cleaner:
-
-```bash
-# Hourly Retention Cleanup Cron Example:
-0 * * * * curl -X POST "https://api.yourdomain.org/api/v1/retention/clean-expired" \
-  -H "Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>" \
-  -H "Content-Type: application/json"
-```
-
-The cleanup service will:
-1. Scan for consultations where `created_at < NOW() - 72 hours`.
-2. Delete raw audio blobs from Supabase Storage bucket `audio-consultations`.
-3. Clear `audio_url` and `raw_audio_path` in PostgreSQL.
-4. Record verified deletion audit logs in `audit_logs`.
+Supabase Storage deletion and database `audio_url` cleanup are not implemented because current patient upload routes do not persist audio objects. If persistent audio storage is added later, implement and verify encryption, access control, expiry deletion, and audit logging before enabling it.
 
 ---
 
@@ -166,7 +187,7 @@ The cleanup service will:
 If a patient exhibits acute red flags (e.g. cardiac agony, dyspnea, acute neurological deficit, snakebite, obstetric hemorrhage):
 1. The app immediately displays an **Emergency SOS Banner** with instant 108/112 dialer buttons.
 2. The case is floor-prioritized to `HIGH` (Emergency) across all dashboards.
-3. If GPS was enabled with user consent, coordinates are attached for emergency fleet dispatch.
+3. If GPS was enabled with user consent, coordinates are attached to the application alert record. The app does not contact ambulance dispatch; patients must call 108 or 112 directly.
 
 ---
 
@@ -189,9 +210,7 @@ docker compose up -d --build
 
 ---
 
-## 8. Quality Gate Summary (Phase 7 Verified)
-- **Backend Test Suite:** 232 Passed, 0 Failed, 4 Skipped (Coverage: 78% across 5,195 statements).
-- **Frontend Type Safety:** `npx tsc --noEmit` exited with 0 errors.
-- **Frontend Linting:** `npm run lint` passed with 0 errors.
-- **Production Build:** `npm run build` compiled 8 static routes cleanly in Next.js 16 Turbopack.
-- **Security Audit:** Zero hardcoded private keys or production credentials in source code.
+## 8. Quality Gate Summary
+- Run the backend and frontend checks against the current commit before each release; historical counts below are not release evidence.
+- **Frontend Linting:** ESLint reports warnings that should be triaged; a zero-warning lint result is not currently achieved.
+- **Security Audit:** Source review required. The encryption helper does not by itself prove that every PHI database field is encrypted; audit the concrete persistence paths and migrate legacy values before production use.

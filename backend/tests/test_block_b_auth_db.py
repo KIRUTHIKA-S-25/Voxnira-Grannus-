@@ -1,5 +1,5 @@
 """
-Tests for Block B: Real Authentication, Phone OTP, Staff Logins, Role Enforcement,
+Tests for Block B: Real Authentication, Patient PIN, Staff Logins, Role Enforcement,
 Token Revocation, and Persistence Layer (B2, B3).
 """
 import pytest
@@ -18,6 +18,7 @@ from app.db import (
     save_follow_up_record,
     get_follow_up_record,
     append_audit_log_entry,
+    create_staff_user,
 )
 
 
@@ -27,52 +28,27 @@ def client():
 
 
 # -----------------------------------------------------------------------------
-# B2.2 Phone OTP Flow Tests
+# B2.2 Retired SMS OTP Route Tests
 # -----------------------------------------------------------------------------
 
-def test_otp_request_and_verify_dev_number(client):
-    """Test OTP request and verification with dev test number +919876543210."""
-    from app.db import _OTP_COOLDOWNS
-    _OTP_COOLDOWNS.clear()
+def test_sms_otp_endpoints_are_retired(client):
+    """SMS OTP cannot dispatch; patient authentication remains phone plus PIN."""
     phone = "+919876543210"
-
-    # 1. Request OTP
     req_res = client.post("/api/v1/auth/otp/request", json={"phone_number": phone})
-    assert req_res.status_code == 200
-    data = req_res.json()
-    assert data["success"] is True
-    assert "dev_otp_hint" not in data  # H1.2: OTPs never appear in API responses
-
-    # 2. Verify with wrong code
-    bad_res = client.post("/api/v1/auth/otp/verify", json={"phone_number": phone, "otp_code": "000000"})
-    assert bad_res.status_code == 401
-    assert "Invalid verification code" in bad_res.json()["detail"]
-
-    # 3. Verify with correct code
-    good_res = client.post("/api/v1/auth/otp/verify", json={"phone_number": phone, "otp_code": "123456"})
-    assert good_res.status_code == 200
-    auth_data = good_res.json()
-    assert "token" in auth_data
-    assert auth_data["role"] == "patient"
-    assert auth_data["phone_number"] == phone
-    assert auth_data["account_id"] is not None
-
-    # 4. Attempt to reuse same OTP (single-use enforcement)
-    reuse_res = client.post("/api/v1/auth/otp/verify", json={"phone_number": phone, "otp_code": "123456"})
-    assert reuse_res.status_code == 401
+    assert req_res.status_code == 410
+    assert "PIN" in req_res.json()["detail"]
+    verify_res = client.post("/api/v1/auth/otp/verify", json={"phone_number": phone, "otp_code": "123456"})
+    assert verify_res.status_code == 410
 
 
-def test_otp_cooldown_rate_limit(client):
-    """Calling OTP request twice within 60s should trigger 429 Too Many Requests."""
+def test_otp_endpoint_always_fails_closed(client):
+    """Repeated requests cannot trigger any outbound SMS because the endpoint is retired."""
     phone = "+919999999999"
     # First request
     res1 = client.post("/api/v1/auth/otp/request", json={"phone_number": phone})
-    assert res1.status_code == 200
-
-    # Immediate second request
+    assert res1.status_code == 410
     res2 = client.post("/api/v1/auth/otp/request", json={"phone_number": phone})
-    assert res2.status_code == 429
-    assert "Please wait" in res2.json()["detail"]
+    assert res2.status_code == 410
 
 
 # -----------------------------------------------------------------------------
@@ -92,6 +68,31 @@ def test_staff_doctor_login_success(client):
     assert "DEMO-NMC" in data["doctor_registration_number"] or "TNMC" in data["doctor_registration_number"]
     assert "Dr. Rajan K." in data["full_name"]
     assert "token" in data
+
+
+def test_new_doctor_requires_manual_verification_before_login_claim(client):
+    """A registration number's format alone must not create a verified-doctor claim."""
+    from app import db
+
+    email = "unverified.doctor@example.test"
+    try:
+        staff = create_staff_user(
+            email=email,
+            password="test-only-long-password",
+            role="doctor",
+            full_name="Unverified Doctor",
+            doctor_registration_number="TNMC-12345",
+        )
+        assert staff["is_verified_doctor"] is False
+
+        response = client.post("/api/v1/auth/login", json={
+            "email": email,
+            "password": "test-only-long-password",
+        })
+        assert response.status_code == 200
+        assert response.json()["is_verified_doctor"] is False
+    finally:
+        db._FALLBACK_STAFF.pop(email, None)
 
 
 def test_staff_nurse_and_admin_login(client):

@@ -36,18 +36,17 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_anon_key: str = ""
     supabase_service_role_key: str = ""
+    default_hospital_id: str = ""
     env: str = "development"
     audio_retention_hours: int = 72
 
     # --- Auth & PHI Security ---
     jwt_secret_key: str = ""
     phi_encryption_key: str = ""
+    grievance_officer_name: str = ""
+    grievance_officer_email: str = ""
 
-    # --- SMS Gateway (Twilio / Console) ---
-    sms_provider: str = "console"  # "twilio", "console"
-    twilio_account_sid: str = ""
-    twilio_auth_token: str = ""
-    twilio_phone_number: str = ""
+    # SMS delivery is intentionally disabled. Notifications are in-app only.
     allow_dev_otp: bool = False
 
     # --- Audio Preprocessing ---
@@ -70,6 +69,14 @@ class Settings(BaseSettings):
     # Below this, we don't trust the auto-detected language enough to rely
     # on the transcript without a doctor verifying it against the audio.
     language_confidence_threshold: float = 0.80
+
+    @property
+    def is_production(self) -> bool:
+        return self.env.lower() in ("production", "prod", "staging")
+
+    @property
+    def is_development(self) -> bool:
+        return self.env.lower() in ("development", "test")
 
 
 @lru_cache

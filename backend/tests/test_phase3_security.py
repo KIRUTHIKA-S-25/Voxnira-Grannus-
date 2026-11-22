@@ -18,9 +18,11 @@ Covers:
   - FastAPI Endpoint Security (Login, Doctor Guard, FHIR Export, Erasure)
 """
 import time
+import asyncio
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from fastapi.security import HTTPAuthorizationCredentials
 
 from app.main import app
 from app.auth import (
@@ -301,14 +303,46 @@ def test_multilingual_dpdp_consent_notices():
     languages = ["en-IN", "ta-IN", "hi-IN", "te-IN"]
     for lang in languages:
         notice_data = get_consent_notice(lang)
-        assert notice_data["version"] == "2023.1-DPDP"
+        assert notice_data["version"] == "2026.11.21-v2"
         notice = notice_data["notice"]
         assert "purpose" in notice
         assert "retention" in notice
-        assert "24" in notice["retention"] or "72" in notice["retention"]
+        assert "Sarvam" in notice["purpose"]
+        assert "Sarvam" in notice["retention"]
         assert "rights" in notice
         assert "emergency_disclaimer" in notice
         assert "108" in notice["emergency_disclaimer"]
+
+
+def test_consent_notice_uses_configured_grievance_contact(monkeypatch):
+    from types import SimpleNamespace
+    import app.consent as consent
+
+    monkeypatch.setattr(consent, "get_settings", lambda: SimpleNamespace(
+        grievance_officer_name="Designated Officer",
+        grievance_officer_email="privacy@example.org",
+    ))
+    contact = consent.get_consent_notice()["grievance_officer"]
+    assert contact == {"name": "Designated Officer", "email": "privacy@example.org"}
+
+
+def test_erased_patient_account_invalidates_existing_token_in_production(monkeypatch):
+    from types import SimpleNamespace
+    import app.auth as auth
+    import app.config as config
+    import app.db as db
+
+    monkeypatch.setattr(config, "get_settings", lambda: SimpleNamespace(env="production", is_production=True))
+    monkeypatch.setattr(db, "get_patient_account_by_id", lambda _account_id: None)
+    token = create_token(
+        user_id="patient-with-erased-account",
+        role=UserRole.PATIENT,
+        account_id="11111111-1111-4111-8111-111111111111",
+    )
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(auth.get_current_user(auth=credentials))
+    assert exc.value.status_code == 401
 
 
 def test_patient_consent_recording():
@@ -321,8 +355,9 @@ def test_patient_consent_recording():
     assert record.patient_id == "patient_abc_123"
     assert record.explicit_consent_granted is True
     assert record.language_code == "ta-IN"
-    assert record.retention_period_hours in (24, 72)
-    assert record.consent_id.startswith("CONSENT-")
+    assert record.retention_period_hours is None
+    assert "Sarvam" in record.purpose
+    assert len(record.consent_id) == 36
 
     # Reject without explicit affirmation
     with pytest.raises(ValueError):
@@ -426,15 +461,44 @@ def test_consent_api_endpoints():
     assert "मरीज सहमति" in data["notice"]["title"]
 
     # Record consent
-    res = client.post("/api/v1/consent/record", json={
-        "patient_id": "pat_hi_1",
+    consent_token = create_token("pat_hi_1", UserRole.PATIENT)
+    res = client.post("/api/v1/consent/record", headers={"Authorization": f"Bearer {consent_token}"}, json={
         "language_code": "hi-IN",
         "explicit_consent": True,
     })
     assert res.status_code == 200
     resp_data = res.json()
-    assert resp_data["consent_id"].startswith("CONSENT-")
+    assert len(resp_data["consent_id"]) == 36
     assert resp_data["explicit_consent_granted"] is True
+
+
+def test_patient_audio_requires_persisted_consent_for_same_patient():
+    owner_token = create_token("consent_owner", UserRole.PATIENT)
+    owner_headers = {"Authorization": f"Bearer {owner_token}"}
+    audio = {"audio": ("recording.wav", b"not processed without consent", "audio/wav")}
+
+    missing = client.post(
+        "/api/v1/pipeline/process-audio", headers=owner_headers, files=audio,
+    )
+    assert missing.status_code == 428
+
+    consent = client.post(
+        "/api/v1/consent/record",
+        headers=owner_headers,
+        json={"language_code": "en-IN", "explicit_consent": True},
+    )
+    assert consent.status_code == 200
+    consent_id = consent.json()["consent_id"]
+
+    other_token = create_token("different_patient", UserRole.PATIENT)
+    other_headers = {"Authorization": f"Bearer {other_token}"}
+    mismatched = client.post(
+        "/api/v1/pipeline/process-audio",
+        headers=other_headers,
+        files=audio,
+        data={"consent_id": consent_id},
+    )
+    assert mismatched.status_code == 403
 
 
 def test_protected_doctor_endpoints():
@@ -527,7 +591,8 @@ def test_protected_doctor_endpoints():
 
 def test_statutory_erasure_endpoint():
     client.cookies.clear()
-    pat_token = create_token(user_id="pat_test_erase", role=UserRole.PATIENT)
+    account_id = "33333333-0000-0000-0000-000000000003"
+    pat_token = create_token(user_id="pat_test_erase", role=UserRole.PATIENT, account_id=account_id)
     
     # Unauthenticated -> 401
     res_unauth = client.post("/api/v1/patient/request-erasure", json={
@@ -536,14 +601,77 @@ def test_statutory_erasure_endpoint():
     })
     assert res_unauth.status_code == 401
 
-    # Authenticated -> 200
+    # Authenticated patient may erase only their own account.
     res = client.post(
         "/api/v1/patient/request-erasure",
         headers={"Authorization": f"Bearer {pat_token}"},
         json={
-            "patient_id": "pat_test_erase",
+            "patient_id": account_id,
             "reason": "Revoking consent under DPDP Act 2023",
         },
     )
     assert res.status_code == 200
-    assert res.json()["status"] == "erasure_complete"
+    assert res.json()["status"] == "success"
+
+    # A patient cannot name another account in the request body.
+    res_other_account = client.post(
+        "/api/v1/patient/request-erasure",
+        headers={"Authorization": f"Bearer {pat_token}"},
+        json={"patient_id": "44444444-0000-0000-0000-000000000004"},
+    )
+    assert res_other_account.status_code == 403
+
+    # Legacy accountless patient tokens cannot claim erasure succeeded.
+    accountless_token = create_token(user_id="pat_accountless", role=UserRole.PATIENT)
+    res_accountless = client.post(
+        "/api/v1/patient/request-erasure",
+        headers={"Authorization": f"Bearer {accountless_token}"},
+        json={"patient_id": "pat_accountless"},
+    )
+    assert res_accountless.status_code == 400
+
+    res_legacy_alias = client.post(
+        "/api/v1/patient/account/erasure",
+        headers={"Authorization": f"Bearer {pat_token}"},
+        json={"reason": "Account erasure through compatibility route"},
+    )
+    assert res_legacy_alias.status_code == 200
+
+    doctor_token = create_token(user_id="doctor_for_erasure_test", role=UserRole.DOCTOR)
+    res_doctor = client.post(
+        "/api/v1/patient/account/erasure",
+        headers={"Authorization": f"Bearer {doctor_token}"},
+        json={"reason": "Must not erase a patient account"},
+    )
+    assert res_doctor.status_code == 403
+
+
+def test_sos_requires_patient_and_does_not_claim_ambulance_dispatch():
+    client.cookies.clear()
+    payload = {"latitude": 11.68, "longitude": 78.92, "patient_name": "Test Patient"}
+
+    assert client.post("/api/v1/emergency/sos", json=payload).status_code == 401
+
+    doctor_token = create_token(user_id="doctor_sos_test", role=UserRole.DOCTOR)
+    forbidden = client.post(
+        "/api/v1/emergency/sos",
+        json=payload,
+        headers={"Authorization": f"Bearer {doctor_token}"},
+    )
+    assert forbidden.status_code == 403
+
+    patient_token = create_token(
+        user_id="patient_sos_test",
+        role=UserRole.PATIENT,
+        account_id="55555555-0000-0000-0000-000000000005",
+    )
+    response = client.post(
+        "/api/v1/emergency/sos",
+        json=payload,
+        headers={"Authorization": f"Bearer {patient_token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "RECORDED"
+    assert "call 108 or 112" in data["message"].lower()
+    assert "does not notify contacts or dispatch emergency services" in data["message"].lower()

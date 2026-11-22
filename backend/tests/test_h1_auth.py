@@ -2,7 +2,7 @@
 Acceptance tests for Block H1: Authentication & Access Control Hardening.
 Verifies:
   - H1.1: Removal of open login (legacy user_id + role bypass returns 401)
-  - H1.2: Real phone OTP (no code leaks in API response, lock on 5 failed attempts, single-use)
+  - H1.2: SMS OTP routes stay disabled; phone + PIN is the patient sign-in path
   - H1.3: Emergency access without OTP (guest emergency token reads only its own case, 403 on other cases or lists)
   - H1.4: Session token refresh and role enforcement
 """
@@ -32,35 +32,29 @@ def test_h1_unregistered_staff_with_password_is_rejected():
     assert res.status_code == 401
 
 
-def test_h1_otp_request_contains_no_code_field():
-    """H1.2: OTP request response contains no code or dev_otp_hint field."""
-    from app.db import _OTP_COOLDOWNS
-    _OTP_COOLDOWNS.clear()
+def test_h1_sms_otp_routes_are_disabled():
+    """SMS sign-in is retired and direct PIN login remains the patient path."""
     res = client.post("/api/v1/auth/otp/request", json={"phone_number": "+919876543210"})
-    assert res.status_code == 200
-    data = res.json()
-    assert data["success"] is True
-    # Invariant: OTP codes must never appear in response payload
-    assert "dev_otp_hint" not in data
-    assert "otp_code" not in data
-    assert "code" not in data
+    assert res.status_code == 410
+    assert "PIN" in res.json()["detail"]
+    verify = client.post("/api/v1/auth/otp/verify", json={"phone_number": "+919876543210", "otp_code": "123456"})
+    assert verify.status_code == 410
 
 
-def test_h1_otp_wrong_code_five_times_locks_attempt():
-    """H1.2: 5 wrong attempts lock out the verification."""
+def test_h1_otp_verification_never_accepts_codes():
+    """No OTP code can authenticate without the disabled SMS delivery flow."""
     test_phone = "+919123456789"
     # Request OTP
     req_res = client.post("/api/v1/auth/otp/request", json={"phone_number": test_phone})
-    assert req_res.status_code in (200, 429)
+    assert req_res.status_code == 410
 
     # Attempt 5 wrong codes
     for _ in range(5):
         client.post("/api/v1/auth/otp/verify", json={"phone_number": test_phone, "otp_code": "000000"})
 
-    # 6th attempt must fail with maximum attempts exceeded
+    # Every attempt is rejected as a retired route.
     final_res = client.post("/api/v1/auth/otp/verify", json={"phone_number": test_phone, "otp_code": "000000"})
-    assert final_res.status_code == 401
-    assert "Maximum verification attempts exceeded" in final_res.json()["detail"] or "attempts" in final_res.json()["detail"]
+    assert final_res.status_code == 410
 
 
 def test_h1_guest_emergency_access_without_otp():

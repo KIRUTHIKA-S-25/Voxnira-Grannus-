@@ -14,13 +14,14 @@ import time
 import pytest
 import numpy as np
 import scipy.io.wavfile as wavfile
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.auth import create_token, UserRole
 from app.pipeline import run_pipeline
-from app.jobs.job_manager import JobManager, JobStatus, get_job_manager
+from app.jobs.job_manager import JobManager, JobRecord, JobStatus, get_job_manager
 from app.schemas import (
     InfoSource,
     PriorityLevel,
@@ -175,7 +176,7 @@ def test_job_manager_idempotency():
     assert rec.job_id == job1_id
 
     # If the job failed, allow retrying under the same key
-    rec.status = JobStatus.FAILED
+    rec.update_stage(JobStatus.FAILED, rec.progress_pct, "Processing failed")
     job3_id = mgr.create_job(idempotency_key=key)
     assert job3_id != job1_id
     assert job3_id.startswith("job_")
@@ -183,6 +184,59 @@ def test_job_manager_idempotency():
     # Cleanup expired jobs
     mgr.cleanup_old_jobs(ttl_seconds=-1)
     assert mgr.get_job_by_idempotency_key(key) is None
+
+
+def test_job_manager_refreshes_cached_status_from_database(monkeypatch):
+    """A worker polling a job must see progress written by another API worker."""
+    mgr = JobManager()
+    job_id = "job_shared_worker"
+    cached = mgr._jobs[job_id] = JobRecord(job_id)
+    cached.status = JobStatus.PREPROCESSING
+    cached.progress_pct = 20
+
+    monkeypatch.setattr("app.db.get_pipeline_job", lambda requested_id: {
+        "id": requested_id,
+        "status": "COMPLETED",
+        "stage": "Consultation triage complete",
+        "progress": 100,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:01:00+00:00",
+        "error_message": None,
+    })
+
+    refreshed = mgr.get_job(job_id)
+
+    assert refreshed is not None
+    assert refreshed is not cached
+    assert refreshed.status == JobStatus.COMPLETED
+    assert refreshed.progress_pct == 100
+    assert refreshed.current_stage == "Consultation triage complete"
+
+
+@pytest.mark.asyncio
+async def test_job_is_not_completed_when_consultation_persistence_fails(monkeypatch):
+    result = SimpleNamespace(
+        request_id="2ed54fa2-5c9f-47bb-a4a3-81dd6af1b92b",
+        clinical_summary=None,
+        safety_screening=None,
+        priority=SimpleNamespace(urgency_tier="doctor_soon", level=SimpleNamespace(value="LOW"), follow_up_days=1),
+        patient_input=SimpleNamespace(language="en-IN"),
+        model_dump=lambda: {},
+    )
+    monkeypatch.setattr("app.jobs.job_manager.run_pipeline", AsyncMock(return_value=result))
+    monkeypatch.setattr("app.routing.categorize_complaint", lambda **_kwargs: ("general", "GEN_MED", "test"))
+    monkeypatch.setattr("app.routing.select_best_doctor", lambda **_kwargs: (None, "No clinician available"))
+    monkeypatch.setattr("app.db.get_default_hospital", lambda: {"id": "c5b971d1-fe39-40bf-a5cb-539f1a98059f"})
+    monkeypatch.setattr("app.db.get_staff_doctors", lambda **_kwargs: [])
+    monkeypatch.setattr("app.db.save_consultation", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("database unavailable")))
+
+    mgr = JobManager()
+    job_id = mgr.create_job()
+    await mgr.execute_job(job_id, b"audio", "recording.wav", "en-IN", {}, "en-IN")
+
+    job = mgr.get_job(job_id)
+    assert job.status == JobStatus.FAILED
+    assert "could not be saved" in job.error
 
 
 @pytest.mark.asyncio
@@ -236,12 +290,17 @@ def test_async_endpoint_idempotency_header():
         "Authorization": f"Bearer {token}",
         "X-Idempotency-Key": "test_idemp_key_http_888",
     }
+    consent_res = client.post(
+        "/api/v1/consent/record", headers=headers,
+        json={"language_code": "ta-IN", "explicit_consent": True},
+    )
+    assert consent_res.status_code == 200
     audio_bytes = _make_valid_wav()
 
     res1 = client.post(
         "/api/v1/pipeline/submit-audio",
         files={"audio": ("consult.wav", audio_bytes, "audio/wav")},
-        data={"language_code": "ta-IN", "age": "45"},
+        data={"language_code": "ta-IN", "age": "45", "consent_id": consent_res.json()["consent_id"]},
         headers=headers,
     )
     assert res1.status_code == 202
@@ -251,7 +310,7 @@ def test_async_endpoint_idempotency_header():
     res2 = client.post(
         "/api/v1/pipeline/submit-audio",
         files={"audio": ("consult.wav", audio_bytes, "audio/wav")},
-        data={"language_code": "ta-IN", "age": "45"},
+        data={"language_code": "ta-IN", "age": "45", "consent_id": consent_res.json()["consent_id"]},
         headers=headers,
     )
     assert res2.status_code == 202

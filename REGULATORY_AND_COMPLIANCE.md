@@ -1,7 +1,8 @@
-# Regulatory Positioning & Compliance Matrix
+# Regulatory Considerations & Evidence Inventory
 
 **Product:** Grannus (RuralCare AI)  
 **Jurisdiction:** Republic of India  
+**Status:** Engineering evidence inventory only; it is not a legal classification, compliance certification, or substitute for review by qualified counsel and clinical governance.
 **Applicable Frameworks:**
 1. Central Drugs Standard Control Organisation (CDSCO) Medical Device Rules, 2017
 2. Telemedicine Practice Guidelines, 2020 (Board of Governors, Medical Council of India / MoHFW)
@@ -12,17 +13,15 @@
 
 ## 1. CDSCO Software as a Medical Device (SaMD) Assessment
 
-### 1.1 Statutory Classification
-Under the **Medical Device Rules, 2017** (amended 2020), software intended for diagnosis, prevention, monitoring, treatment, or alleviation of disease qualifies as a Medical Device if it acts autonomously or directly drives clinical actions.
-
-**Grannus is legally positioned as Non-Device Clinical Decision Support (CDS) Software.**
+### 1.1 Classification Status
+The product includes AI-supported triage, clinical summaries, emergency prioritization, and prescription workflows. Its regulatory classification has not been established by this engineering inventory. A qualified regulatory assessment is required before clinical deployment; clinician review and disclaimers do not determine the classification.
 
 | Assessment Criterion | Grannus Architecture | Regulatory Finding |
 |---|---|---|
-| **Autonomous Diagnosis** | Grannus explicitly emits `diagnosis: null` on all API outputs. It summarizes patient symptoms and flags urgency levels. | **Non-Diagnostic:** Does not diagnose; merely structures patient speech for clinician review. |
-| **Direct Therapeutic Delivery** | Grannus does not operate, control, or trigger drug dispensers, infusion pumps, or physical devices. | **Non-Therapeutic:** Cannot prescribe or dispense autonomously. |
-| **Independent Clinician Review** | Every summary requires mandatory review by a Registered Medical Practitioner (`clinician_review_required: true`). | **Decision Support:** RMP retains full medical responsibility and reviews original voice audio/transcripts. |
-| **Self-Care / Low Priority** | Low-urgency home remedy advice is limited to basic non-pharmacological comfort measures with explicit red-flag warnings. | **Informational Support:** Does not substitute for formal primary care consultation. |
+| **AI output** | The application structures symptoms, summarizes cases, and assigns urgency. | Functional description only; classification and intended-use claims require formal review. |
+| **Prescription workflow** | Clinician actions and prescriptions are gated by doctor-role checks and a persisted manual verification flag. | This control does not independently validate registration with a medical council. |
+| **Clinician review** | Clinical workflows expose clinician review and escalation paths. | Confirm operational workflows and clinical governance before deployment. |
+| **Self-care guidance** | Low-urgency guidance is limited to non-pharmacological suggestions and red-flag prompts. | This product behavior does not establish regulatory status. |
 
 ### 1.2 Statutory Labeling & Emergency Disclaimers
 Grannus incorporates prominent disclaimers across all patient and clinician interfaces:
@@ -43,7 +42,7 @@ Under the guidelines notified by the Ministry of Health and Family Welfare (MoHF
 
 ### 2.2 Patient Identification & Consent
 - **Section 3.2:** Explicit patient consent must be recorded before telemedicine services commence.
-- **Grannus Implementation:** Multilingual DPDP-compliant consent dialog prior to audio recording (see Section 3 below).
+- **Grannus Implementation:** A multilingual consent dialog is displayed before audio recording. The notice content and consent flow require legal and clinical review before use.
 
 ### 2.3 Prescription Signing and Record Retention
 - **Section 3.7:** Prescriptions generated via voice translation must be linked to the clinician's registration number and retained for at least 3 years.
@@ -51,21 +50,21 @@ Under the guidelines notified by the Ministry of Health and Family Welfare (MoHF
 
 ---
 
-## 3. Digital Personal Data Protection (DPDP) Act 2023 Compliance Matrix
+## 3. DPDP Act 2023 Technical Evidence Inventory
 
-Grannus acts as a **Data Fiduciary** under the DPDP Act 2023.
+The matrix assumes Grannus may act as a Data Fiduciary; the actual legal role and obligations require counsel review.
 
 | DPDP Section | Statutory Obligation | Grannus Technical Implementation | Verification Method |
 |---|---|---|---|
 | **Section 4 & 6** | Grounds for processing; Requirement of free, informed, specific, unconditional, and unambiguous consent. | Multilingual consent notices in English, Tamil, Hindi, and Telugu (`consent.py`). Mandatory affirmative checkbox before recording. | Unit & integration tests (`test_multilingual_dpdp_consent_notices`, `test_patient_consent_recording`). |
-| **Section 5** | Notice with purpose specification and Data Protection Grievance Officer details. | Notice details exact clinical purpose, 72-hour audio retention, and Grievance Officer email (`grievance.officer@grannus.health`). | Endpoint `GET /api/v1/consent/notice` verified in test suite. |
-| **Section 8(4)** | Implementation of technical and organizational measures to ensure personal data protection. | Field-level encryption (`encrypt_phi_field`), zero-PHI logging (`sanitize_log_message`), magic byte upload validation (`validate_audio_upload`). | Automated tests for encryption roundtrip and log sanitization. |
+| **Section 5** | Notice with purpose specification and grievance contact details. | The backend notice and frontend consent dialog use deployment-configured grievance contact details. Those values are not configured in this workspace; configure and verify the real contact before release. | Endpoint `GET /api/v1/consent/notice` and frontend build; validate deployed values manually. |
+| **Section 8(4)** | Implementation of technical and organizational measures to ensure personal data protection. | Versioned AES-GCM encryption is integrated into supported application persistence paths, with keyed lookup hashes for phone numbers. The connected database still contains legacy plaintext values and this workspace has no PHI key or service-role key to run the backfill. | Backend tests cover encryption round trips; live row counts still show plaintext. Do not treat this as a production control until backup, key provisioning, backfill, and zero-plaintext verification are complete. |
 | **Section 8(6)** | Notification of personal data breaches to the Data Protection Board of India and affected Data Principals. | Formulated 6-hour response protocol detailed in `BREACH_RESPONSE_PLAN.md`. | Verified breach response procedure. |
-| **Section 8(7)** | Erasure of personal data upon withdrawal of consent or expiry of specified purpose. | **Automated 72-Hour Data Retention Sweeper:** Raw audio files are scheduled for automatic deletion 72 hours post-intake (`data_retention.py`). | Automated deletion schedule verification test (`test_data_retention_and_statutory_erasure`). |
+| **Section 8(7)** | Erasure of personal data upon withdrawal of consent or expiry of specified purpose. | The retention worker deletes expired local audio files. It does not remove Supabase Storage objects. Account erasure anonymizes profiles and disassociates retained clinical records; this is not deletion of every clinical record. | Local-file behavior is covered by tests. Storage-object deletion and production retention configuration remain unverified. |
 | **Section 9** | Processing of children's personal data. | Age-aware pediatric safeguards: Children under 5 and infants (age in months) cannot be triaged as LOW; parental consent required. | Phase 1 & Phase 3 unit tests (`test_feature_extraction_age_groups_and_infants`). |
 | **Section 11** | Right to access information about personal data. | Patient intake lookup and consultation record export available to authorized users. | RBAC and consultation API. |
-| **Section 12** | Statutory Right to Correction and Erasure (Right to be Forgotten). | Dedicated statutory endpoint `POST /api/v1/patient/request-erasure` purges raw voice files and anonymizes consultation metadata. | Integration test `test_statutory_erasure_endpoint`. |
-| **Section 13** | Right of grievance redressal. | Contact info of the Data Protection Grievance Officer provided in all localized notices. | Displayed in frontend Consent Dialog and API responses. |
+| **Section 12** | Right to correction and erasure. | Account-erasure endpoints retire the account, anonymize profiles, and unlink retained clinical records; raw local audio cleanup is handled separately. | Automated tests cover application behavior. Retention exceptions, identity/session revocation, and production storage cleanup need operational verification. |
+| **Section 13** | Grievance redressal. | The configured grievance email is included in the notice. | Deployment configuration and rendered notice must be checked before release. |
 
 ---
 

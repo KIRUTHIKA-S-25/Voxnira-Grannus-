@@ -54,7 +54,7 @@ Grannus is a **voice bridge with urgency routing** for a specific hospital.
 ### B2. Authentication and sessions `P0`
 
 - [ ] **B2.1** Replace `/api/v1/auth/login`, which currently issues an admin token to anyone with no credentials.
-- [ ] **B2.2** Patients log in with **phone OTP** through a provider (Supabase Auth phone, Twilio Verify, or MSG91). Check current India SMS/DLT requirements with the provider.
+- [x] **B2.2** Outbound SMS sign-in is retired. Patients use phone number and PIN.
   - 6 digits, 5-minute expiry, single use, stored hashed.
   - Maximum 5 attempts, resend cooldown, rate limits per number and per IP.
   - OTPs never appear in logs.

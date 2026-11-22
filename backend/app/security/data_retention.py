@@ -2,7 +2,7 @@
 Data Retention and Audio Purge Handler for Grannus RuralCare AI (Block H4).
 
 Enforces:
-  - 24-hour statutory retention limit for raw patient/doctor voice recordings (H4.1, H4.2)
+  - Configurable retention window for raw patient/doctor voice recordings (default 72 hours)
   - Medical Record Preservation under Telemedicine Practice Guidelines 2020 (Text clinical summary preserved)
   - Append-only statutory audit logging to deletion_log (H4.3)
   - DPDP Act 2023 Statutory 'Right to Erasure'
@@ -42,7 +42,11 @@ class DataRetentionManager:
         now = datetime.now(timezone.utc)
         delete_after = now + timedelta(hours=effective_hours)
         expiry_ts = time.time() + (effective_hours * 3600)
-        h_id = hospital_id or "c5b971d1-fe39-40bf-a5cb-539f1a98059f"
+        if hospital_id:
+            h_id = hospital_id
+        else:
+            from app.db import get_default_hospital_id
+            h_id = get_default_hospital_id()
 
         record = {
             "file_path": file_path,
@@ -59,18 +63,23 @@ class DataRetentionManager:
             from app.db import get_supabase_client
             client = get_supabase_client()
             if client:
+                from app.security.phi_protection import phi_lookup_hash, encrypt_phi_field
+                file_path_hash = phi_lookup_hash(file_path, "audio-file-path")
                 db_record = {
-                    "file_path": file_path,
+                    "file_path": encrypt_phi_field(file_path),
+                    "file_path_lookup_hash": file_path_hash,
                     "hospital_id": h_id,
                     "created_at": now.isoformat(),
                     "delete_after": delete_after.isoformat(),
                     "purged": False,
                 }
-                client.table("audio_retention_queue").upsert(db_record).execute()
+                client.table("audio_retention_queue").upsert(
+                    db_record, on_conflict="file_path_lookup_hash"
+                ).execute()
         except Exception as exc:
-            logger.error("Failed to persist audio retention record to DB: %s", exc)
+            logger.error("Failed to persist audio retention record (%s)", type(exc).__name__)
 
-        logger.info("Scheduled %dh audio deletion for %s (delete_after: %s)", effective_hours, file_path, delete_after.isoformat())
+        logger.info("Scheduled raw audio deletion (retention: %dh, delete_after: %s)", effective_hours, delete_after.isoformat())
         return record
 
     def get_retention_status(self) -> Dict[str, Any]:
@@ -114,6 +123,9 @@ class DataRetentionManager:
                 if res.data:
                     for row in res.data:
                         f_path = row["file_path"]
+                        if f_path.startswith("v2:"):
+                            from app.security.phi_protection import decrypt_phi_field
+                            f_path = decrypt_phi_field(f_path)
                         p = Path(f_path)
                         try:
                             if p.exists():
@@ -139,11 +151,11 @@ class DataRetentionManager:
                                 "purged": True,
                                 "purged_at": now_iso,
                             }).eq("id", row["id"]).execute()
-                            logger.info("Database sweep purged expired audio: %s", f_path)
+                            logger.info("Database sweep purged an expired audio object")
                         except Exception as p_err:
-                            logger.error("Failed to purge db file %s: %s", f_path, p_err)
+                            logger.error("Failed to purge an expired audio object: %s", p_err)
             except Exception as exc:
-                logger.error("Supabase audio retention sweep error: %s", exc)
+                logger.error("Supabase audio retention sweep failed (%s)", type(exc).__name__)
 
         # 2. Check local queue (for active tests or clock-advance simulations)
         for file_path, record in list(self._scheduled_deletions.items()):
@@ -169,9 +181,9 @@ class DataRetentionManager:
                             "retention_hours": retention_hours,
                         },
                     )
-                    logger.info("Purged expired %dh raw audio: %s", retention_hours, file_path)
+                    logger.info("Purged expired raw audio (retention: %dh)", retention_hours)
                 except Exception as exc:
-                    logger.error("Failed to purge %s: %s", file_path, exc)
+                    logger.error("Failed to purge expired raw audio (%s)", type(exc).__name__)
 
         return purged
 

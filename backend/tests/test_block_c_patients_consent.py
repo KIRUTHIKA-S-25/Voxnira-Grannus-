@@ -130,20 +130,20 @@ def test_versioned_patient_consent_flow(client):
     notice_res = client.get("/api/v1/consent/notice?language_code=ta-IN")
     assert notice_res.status_code == 200
     n_data = notice_res.json()
-    assert n_data["version"] == "2023.1-DPDP"
+    assert n_data["version"] == "2026.11.21-v2"
     assert "நோயாளி ஒப்புதல்" in n_data["notice"]["title"]
 
     # 2. Record consent
-    rec_res = client.post("/api/v1/consent/record", json={
-        "patient_id": "pat_consent_001",
+    consent_token = create_token("pat_consent_001", UserRole.PATIENT)
+    rec_res = client.post("/api/v1/consent/record", headers={"Authorization": f"Bearer {consent_token}"}, json={
         "language_code": "ta-IN",
         "explicit_consent": True,
     })
     assert rec_res.status_code == 200
     c_data = rec_res.json()
     assert c_data["explicit_consent_granted"] is True
-    assert c_data["consent_version"] == "2023.1-DPDP"
-    assert "CONSENT-" in c_data["consent_id"]
+    assert c_data["consent_version"] == "2026.11.21-v2"
+    assert len(c_data["consent_id"]) == 36
 
 
 # -----------------------------------------------------------------------------
@@ -157,11 +157,18 @@ def test_patient_data_export_and_erasure(client):
     headers = {"Authorization": f"Bearer {token}"}
 
     # Create profile
-    client.post("/api/v1/patient/profiles", json={
+    profile = client.post("/api/v1/patient/profiles", json={
         "full_name": "Export Candidate",
         "age": "50",
         "relation": "self",
     }, headers=headers)
+    profile_id = profile.json()["id"]
+    consent_res = client.post("/api/v1/consent/record", headers=headers, json={
+        "language_code": "en-IN",
+        "explicit_consent": True,
+        "profile_id": profile_id,
+    })
+    assert consent_res.status_code == 200
 
     # 1. Export patient data
     export_res = client.get("/api/v1/patient/data-export", headers=headers)
@@ -170,6 +177,7 @@ def test_patient_data_export_and_erasure(client):
     assert exp["account_id"] == acc_id
     assert len(exp["profiles"]) >= 1
     assert exp["profiles"][0]["full_name"] == "Export Candidate"
+    assert any(c["id"] == consent_res.json()["consent_id"] for c in exp["consents"])
 
     # 2. Execute statutory erasure
     erase_res = client.post("/api/v1/patient/data-erasure", json={
@@ -179,8 +187,8 @@ def test_patient_data_export_and_erasure(client):
     assert erase_res.status_code == 200
     assert erase_res.json()["status"] == "success"
 
-    # 3. Confirm profile is now anonymized
+    # 3. Confirm the retired account can no longer retrieve any profile
     post_export = client.get("/api/v1/patient/data-export", headers=headers)
     assert post_export.status_code == 200
-    anonymized_profiles = post_export.json()["profiles"]
-    assert any(p["full_name"] == "ANONYMIZED_PATIENT" for p in anonymized_profiles)
+    assert post_export.json()["profiles"] == []
+    assert all(c.get("owner_id") is None for c in post_export.json()["consents"])

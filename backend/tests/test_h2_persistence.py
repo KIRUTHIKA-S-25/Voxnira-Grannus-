@@ -39,7 +39,6 @@ def test_h2_production_startup_fails_without_database():
         supabase_url="",
         supabase_service_role_key="",
         supabase_anon_key="",
-        sms_provider="console",
     )
     with patch("app.main.get_settings", return_value=mock_settings):
         with pytest.raises(RuntimeError) as exc_info:

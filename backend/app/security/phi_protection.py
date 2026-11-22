@@ -9,7 +9,10 @@ Compliant with:
 import re
 import base64
 import hashlib
+import hmac
+import os
 from typing import Dict, Any, Tuple
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from app.config import get_settings
 
 # Regex patterns for direct Indian identifiers
@@ -74,30 +77,29 @@ def sanitize_log_message(msg: str) -> str:
 
 def _get_encryption_key() -> bytes:
     settings = get_settings()
-    raw = settings.phi_encryption_key or "grannus_telehealth_field_level_phi_key"
+    raw = settings.phi_encryption_key
+    if not raw and settings.is_production:
+        raise RuntimeError("PHI_ENCRYPTION_KEY must be configured outside development.")
+    raw = raw or "development-only-grannus-phi-key"
     return hashlib.sha256(raw.encode()).digest()
 
 
+def phi_lookup_hash(value: str, purpose: str) -> str:
+    """Return a keyed, purpose-separated digest for exact-match PHI lookups."""
+    if not value:
+        return ""
+    key = _get_encryption_key()
+    return hmac.new(key, f"grannus-lookup-v1:{purpose}:{value}".encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 def encrypt_phi_field(plaintext: str) -> str:
-    """
-    Field-level symmetric encryption for sensitive database columns
-    using AES-GCM emulation with HMAC authentication.
-    """
+    """Encrypt a PHI field with versioned AES-256-GCM authenticated encryption."""
     if not plaintext:
         return ""
     key = _get_encryption_key()
-    data = plaintext.encode("utf-8")
-    
-    # Generate keystream block from key + counter
-    salt = hashlib.sha256(key + b":salt").digest()[:16]
-    keystream = hashlib.sha256(key + salt).digest()
-    
-    # XOR encryption
-    encrypted_bytes = bytes([b ^ keystream[i % len(keystream)] for i, b in enumerate(data)])
-    mac = hashlib.sha256(key + encrypted_bytes).digest()[:16]
-    
-    payload = salt + mac + encrypted_bytes
-    return base64.urlsafe_b64encode(payload).decode("utf-8")
+    nonce = os.urandom(12)
+    encrypted = AESGCM(key).encrypt(nonce, plaintext.encode("utf-8"), b"grannus-phi-v2")
+    return "v2:" + base64.urlsafe_b64encode(nonce + encrypted).decode("ascii")
 
 
 def decrypt_phi_field(ciphertext_b64: str) -> str:
@@ -106,6 +108,14 @@ def decrypt_phi_field(ciphertext_b64: str) -> str:
         return ""
     try:
         key = _get_encryption_key()
+        if ciphertext_b64.startswith("v2:"):
+            raw = base64.urlsafe_b64decode(ciphertext_b64[3:].encode("ascii"))
+            if len(raw) < 12 + 16:
+                raise ValueError("Ciphertext is truncated")
+            plaintext = AESGCM(key).decrypt(raw[:12], raw[12:], b"grannus-phi-v2")
+            return plaintext.decode("utf-8")
+
+        # Read legacy ciphertexts during key/data migration. New writes always use AES-GCM.
         raw = base64.urlsafe_b64decode(ciphertext_b64.encode("utf-8"))
         salt = raw[:16]
         mac = raw[16:32]
@@ -113,7 +123,7 @@ def decrypt_phi_field(ciphertext_b64: str) -> str:
         
         # Verify integrity
         expected_mac = hashlib.sha256(key + encrypted_bytes).digest()[:16]
-        if not hashlib.sha256(mac).digest() == hashlib.sha256(expected_mac).digest():
+        if not hmac.compare_digest(mac, expected_mac):
             raise ValueError("Integrity MAC mismatch")
             
         keystream = hashlib.sha256(key + salt).digest()
