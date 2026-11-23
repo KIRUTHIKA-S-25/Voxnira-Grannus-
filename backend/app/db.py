@@ -2719,7 +2719,23 @@ def get_assignment_for_consultation(consultation_id: str) -> Optional[dict]:
             if res.data:
                 return _decode_text_fields(res.data[0], ("reassignment_reason", "locked_by_name"))
         except Exception as exc:
-            _handle_database_error("get_assignment", exc)
+            # Fallback if created_at column is not yet migrated in remote DB
+            if "created_at" in str(exc).lower() or "42703" in str(exc) or "pgrst204" in str(exc).lower():
+                try:
+                    res = (
+                        client.table("consultation_assignments")
+                        .select("*")
+                        .eq("consultation_id", consultation_id)
+                        .order("claimed_at", desc=True)
+                        .limit(1)
+                        .execute()
+                    )
+                    if res.data:
+                        return _decode_text_fields(res.data[0], ("reassignment_reason", "locked_by_name"))
+                except Exception as inner_exc:
+                    _handle_database_error("get_assignment", inner_exc)
+            else:
+                _handle_database_error("get_assignment", exc)
     return _MEM_ASSIGNMENTS.get(consultation_id)
 
 
@@ -2732,7 +2748,16 @@ def get_assignment_history(consultation_id: str) -> List[dict]:
             if res.data:
                 return [_decode_text_fields(row, ("reassignment_reason", "locked_by_name")) for row in res.data]
         except Exception as exc:
-            _handle_database_error("assignment_history", exc)
+            if "created_at" in str(exc).lower() or "42703" in str(exc) or "pgrst204" in str(exc).lower():
+                try:
+                    res = (client.table("consultation_assignments").select("*")
+                           .eq("consultation_id", consultation_id).order("claimed_at").execute())
+                    if res.data:
+                        return [_decode_text_fields(row, ("reassignment_reason", "locked_by_name")) for row in res.data]
+                except Exception as inner_exc:
+                    _handle_database_error("assignment_history", inner_exc)
+            else:
+                _handle_database_error("assignment_history", exc)
     latest = _MEM_ASSIGNMENTS.get(consultation_id)
     return [latest] if latest else []
 
