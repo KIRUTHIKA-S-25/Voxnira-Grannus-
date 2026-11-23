@@ -22,6 +22,8 @@ import {
   getPatientProfiles,
   PatientProfile,
   UrgencyTier,
+  getAuthToken,
+  getApiBaseUrl,
 } from '@/lib/api';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -33,7 +35,7 @@ export default function HistoryPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('grannus_auth_token') : null;
+    const token = getAuthToken();
     const user = typeof window !== 'undefined' ? localStorage.getItem('grannus_user') : null;
     if (!token && !user) {
       router.replace('/login');
@@ -49,7 +51,7 @@ export default function HistoryPage() {
       .catch((err) => console.warn('Could not load profiles', err));
 
     // Load consultations for profile
-    const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    const baseUrl = getApiBaseUrl();
 
     fetch(`${baseUrl}/api/v1/patient/consultations${prof?.id ? `?profile_id=${prof.id}` : ''}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},

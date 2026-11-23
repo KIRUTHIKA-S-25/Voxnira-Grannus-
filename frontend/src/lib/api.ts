@@ -218,15 +218,22 @@ export const SUPPORTED_LANGUAGES = [
 let _inMemoryAuthToken: string | null = null;
 
 export function getAuthToken(): string | null {
-  return _inMemoryAuthToken;
+  if (_inMemoryAuthToken) return _inMemoryAuthToken;
+  if (typeof window !== 'undefined') {
+    const token = sessionStorage.getItem('grannus_auth_token') || localStorage.getItem('grannus_auth_token');
+    if (token) {
+      _inMemoryAuthToken = token;
+      return token;
+    }
+  }
+  return null;
 }
 
 export function setAuthToken(token: string): void {
   _inMemoryAuthToken = token;
-  // Security Fix (A4): Do NOT persist raw JWTs in localStorage to protect against XSS exfiltration.
-  // The backend sets an httpOnly, SameSite=Lax cookie which is automatically transmitted with credentials: 'include'.
   if (typeof window !== 'undefined') {
-    localStorage.removeItem('grannus_auth_token');
+    sessionStorage.setItem('grannus_auth_token', token);
+    localStorage.setItem('grannus_auth_token', token);
     window.dispatchEvent(new Event('grannus_auth_change'));
   }
 }
@@ -234,8 +241,10 @@ export function setAuthToken(token: string): void {
 export function removeAuthToken(): void {
   _inMemoryAuthToken = null;
   if (typeof window !== 'undefined') {
+    sessionStorage.removeItem('grannus_auth_token');
     localStorage.removeItem('grannus_auth_token');
     localStorage.removeItem('grannus_user');
+    localStorage.removeItem('grannus_active_profile');
     window.dispatchEvent(new Event('grannus_auth_change'));
   }
 }
@@ -956,6 +965,7 @@ export async function getDoctorQueue(params?: {
   try {
     const res = await fetch(`${baseUrl}/api/v1/doctor/queue?${query.toString()}`, {
       headers: getAuthHeaders(),
+      credentials: 'include',
     });
 
     if (res.status === 401 || res.status === 403) {

@@ -7,7 +7,14 @@ import { PriorityFilter } from '@/components/dashboard/priority-filter';
 import { CaseViewPanel } from '@/components/dashboard/case-view-panel';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { toggleDoctorAvailability, getDoctorRoster, getAdminOperationalCases } from '@/lib/api';
+import {
+  toggleDoctorAvailability,
+  getDoctorRoster,
+  getAdminOperationalCases,
+  getAuthToken,
+  setAuthToken,
+  removeAuthToken,
+} from '@/lib/api';
 import {
   Search,
   Plus,
@@ -46,11 +53,14 @@ export default function DashboardPage() {
   useEffect(() => {
     try {
       const stored = localStorage.getItem('grannus_user');
-      const token = localStorage.getItem('grannus_auth_token');
-      if (stored && token) {
+      const token = getAuthToken();
+      if (stored) {
         const u = JSON.parse(stored);
         if (['doctor', 'nurse', 'admin'].includes(u.role)) {
           setCurrentUser(u);
+          if (token) {
+            setAuthToken(token);
+          }
           if (typeof u.is_on_duty === 'boolean') {
             setIsOnDuty(u.is_on_duty);
           }
@@ -59,8 +69,7 @@ export default function DashboardPage() {
               if (res && res.doctors) {
                 setDoctorsRoster(res.doctors);
               } else if (res && res.unauthorized) {
-                localStorage.removeItem('grannus_user');
-                localStorage.removeItem('grannus_auth_token');
+                removeAuthToken();
                 router.replace('/login');
               }
             })
@@ -71,8 +80,7 @@ export default function DashboardPage() {
         }
       }
       // Redirect unauthenticated visitors to login (A1, B10)
-      localStorage.removeItem('grannus_user');
-      localStorage.removeItem('grannus_auth_token');
+      removeAuthToken();
       router.replace('/login');
     } catch (e) {
       console.warn('Session check:', e);
@@ -104,8 +112,7 @@ export default function DashboardPage() {
   }, [currentUser, adminSearch]);
 
   const handleLogout = () => {
-    localStorage.removeItem('grannus_auth_token');
-    localStorage.removeItem('grannus_user');
+    removeAuthToken();
     setCurrentUser(null);
     router.push('/login');
   };
