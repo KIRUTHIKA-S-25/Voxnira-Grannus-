@@ -3,12 +3,14 @@ import type { NextConfig } from "next";
 const isProd = process.env.NODE_ENV === "production";
 
 function publicOrigin(envName: string): string {
-  const value = process.env[envName]?.trim();
-  if (!value) throw new Error(`${envName} must be set before building the production frontend.`);
+  const raw = process.env[envName]?.trim();
+  if (!raw) throw new Error(`${envName} must be set before building the production frontend.`);
+  // Strip any trailing slashes to avoid double-slash endpoints like //api/v1/
+  const value = raw.replace(/\/+$/, "");
   const parsed = new URL(value);
   if (
     parsed.protocol !== "https:" || !parsed.hostname || parsed.username || parsed.password ||
-    parsed.pathname !== "/" || parsed.search || parsed.hash ||
+    (parsed.pathname !== "/" && parsed.pathname !== "") || parsed.search || parsed.hash ||
     /yourdomain|your-project|example|localhost/i.test(parsed.hostname)
   ) {
     throw new Error(`${envName} must be a deployed HTTPS URL without a path or placeholder host.`);

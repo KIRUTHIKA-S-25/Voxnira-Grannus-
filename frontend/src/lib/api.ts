@@ -249,11 +249,16 @@ export function getAuthHeaders(): Record<string, string> {
   return headers;
 }
 
+export function getApiBaseUrl(): string {
+  const url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  return url.replace(/\/+$/, '');
+}
+
 export async function recordPatientConsent(params: {
   language_code: string;
   profile_id?: string;
 }): Promise<{ consent_id: string }> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const response = await fetch(`${baseUrl}/api/v1/consent/record`, {
     method: 'POST',
     headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
@@ -302,7 +307,7 @@ export async function processAudio(params: {
   if (params.latitude !== undefined && params.latitude !== null) formData.append('latitude', String(params.latitude));
   if (params.longitude !== undefined && params.longitude !== null) formData.append('longitude', String(params.longitude));
 
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const response = await fetch(`${baseUrl}/api/v1/pipeline/process-audio`, {
     method: 'POST',
     headers: getAuthHeaders(),
@@ -331,7 +336,7 @@ export async function sendVoicePrescription(params: {
   formData.append('patient_language', params.patient_language);
   if (params.consultation_id) formData.append('consultation_id', params.consultation_id);
 
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const response = await fetch(`${baseUrl}/api/v1/doctor/voice-prescription`, {
     method: 'POST',
     headers: getAuthHeaders(),
@@ -353,7 +358,7 @@ export async function loginAsClinician(options: {
   password: string;
   regNo?: string;
 }): Promise<string> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const email = options.email;
   const password = options.password;
   const regNo = options.regNo;
@@ -396,7 +401,7 @@ export async function loginAsClinician(options: {
  * Authenticates as verified doctor to satisfy Telemedicine Guidelines 2020.
  */
 export async function exportFhirBundle(result: PipelineResult): Promise<Record<string, unknown>> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const token = getAuthToken();
 
   const headers: Record<string, string> = {
@@ -454,7 +459,7 @@ export async function submitAudioAsync(params: {
   if (params.latitude !== undefined && params.latitude !== null) formData.append('latitude', String(params.latitude));
   if (params.longitude !== undefined && params.longitude !== null) formData.append('longitude', String(params.longitude));
 
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const response = await fetch(`${baseUrl}/api/v1/pipeline/submit-audio`, {
     method: 'POST',
     headers: getAuthHeaders(),
@@ -473,7 +478,7 @@ export async function submitAudioAsync(params: {
  * Poll status and progress of an asynchronous pipeline triage job.
  */
 export async function getJobStatus(jobId: string): Promise<any> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const response = await fetch(`${baseUrl}/api/v1/pipeline/job-status/${jobId}`, {
     headers: getAuthHeaders(),
   });
@@ -525,7 +530,7 @@ export async function checkInConsultation(
   status: 'improving' | 'same' | 'worse',
   notes?: string
 ): Promise<CheckInResponse> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const response = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}/check-in`, {
     method: 'POST',
     headers: {
@@ -549,7 +554,7 @@ export async function escalateConsultation(
   consultationId: string,
   reason?: string
 ): Promise<CheckInResponse> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const response = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}/escalate`, {
     method: 'POST',
     headers: {
@@ -570,7 +575,7 @@ export async function escalateConsultation(
  * Retrieve asynchronous bilingual voice thread.
  */
 export async function getVoiceThread(consultationId: string): Promise<VoiceThread> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const response = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}/thread`, {
     headers: getAuthHeaders(),
   });
@@ -594,7 +599,7 @@ export async function replyToVoiceThread(params: {
   formData.append('audio', params.audio, 'patient_reply.webm');
   if (params.patientLanguage) formData.append('patient_language', params.patientLanguage);
 
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const response = await fetch(
     `${baseUrl}/api/v1/consultations/${params.consultationId}/thread/patient-reply`,
     {
@@ -677,7 +682,7 @@ export interface PatientPinStatus {
  * Check if a phone number exists, has a 4-digit PIN configured, and lockout state.
  */
 export async function checkPatientPhoneStatus(phoneNumber: string): Promise<PatientPinStatus> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const query = new URLSearchParams({ phone_number: phoneNumber });
   const res = await fetch(`${baseUrl}/api/v1/auth/patient/phone-status?${query.toString()}`, {
     method: 'GET',
@@ -696,7 +701,7 @@ export async function checkPatientPhoneStatus(phoneNumber: string): Promise<Pati
  * Register compulsory 4-digit PIN for new patient or account without PIN.
  */
 export async function setPatientPin(phoneNumber: string, pin: string): Promise<LoginResponse> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const res = await fetch(`${baseUrl}/api/v1/auth/patient/set-pin`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -721,7 +726,7 @@ export async function setPatientPin(phoneNumber: string, pin: string): Promise<L
  * Authenticate returning patient with their 4-digit PIN.
  */
 export async function loginPatientWithPin(phoneNumber: string, pin: string): Promise<LoginResponse> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const res = await fetch(`${baseUrl}/api/v1/auth/patient/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -758,7 +763,7 @@ export async function guestEmergencyIntake(params: {
   age?: string;
   gender?: string;
 }): Promise<GuestEmergencyResponse> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const res = await fetch(`${baseUrl}/api/v1/auth/guest-emergency`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -809,7 +814,7 @@ export interface SOSDispatchResponse {
  * This does not dispatch ambulance or emergency services.
  */
 export async function triggerEmergencySOS(params: SOSDispatchPayload): Promise<SOSDispatchResponse> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const res = await fetch(`${baseUrl}/api/v1/emergency/sos`, {
     method: 'POST',
     headers: {
@@ -832,7 +837,7 @@ export async function triggerEmergencySOS(params: SOSDispatchPayload): Promise<S
  * Staff login with email and password (doctors, nurses, admins).
  */
 export async function loginStaff(payload: Record<string, any>): Promise<LoginResponse> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const res = await fetch(`${baseUrl}/api/v1/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -857,7 +862,7 @@ export async function loginStaff(payload: Record<string, any>): Promise<LoginRes
  * Log out and revoke active session.
  */
 export async function logoutUser(): Promise<void> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   try {
     await fetch(`${baseUrl}/api/v1/auth/logout`, {
       method: 'POST',
@@ -879,7 +884,7 @@ export async function logoutUser(): Promise<void> {
  * Fetch patient profiles linked to authenticated phone account.
  */
 export async function getPatientProfiles(): Promise<PatientProfile[]> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const res = await fetch(`${baseUrl}/api/v1/patient/profiles`, {
     headers: getAuthHeaders(),
   });
@@ -895,7 +900,7 @@ export async function getPatientProfiles(): Promise<PatientProfile[]> {
  * Create a new patient profile under authenticated phone account.
  */
 export async function createPatientProfile(profile: PatientProfileCreate): Promise<PatientProfile> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const res = await fetch(`${baseUrl}/api/v1/patient/profiles`, {
     method: 'POST',
     headers: {
@@ -941,7 +946,7 @@ export async function getDoctorQueue(params?: {
   status?: string;
   search?: string;
 }): Promise<DoctorQueueResponse> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const query = new URLSearchParams();
   if (params?.tier && params.tier !== 'All') query.append('tier', params.tier);
   if (params?.department) query.append('department', params.department);
@@ -979,7 +984,7 @@ export async function getDoctorQueue(params?: {
 }
 
 export async function getAdminOperationalCases(search = ''): Promise<{ count: number; cases: any[] }> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const url = new URL(`${baseUrl}/api/v1/admin/cases`);
   if (search.trim()) url.searchParams.set('search', search.trim());
   const res = await fetch(url.toString(), { headers: getAuthHeaders(), credentials: 'include' });
@@ -991,7 +996,7 @@ export async function getAdminOperationalCases(search = ''): Promise<{ count: nu
 }
 
 export async function getRoutingSuggestion(consultationId: string): Promise<any> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const res = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}/routing-suggestion`, { headers: getAuthHeaders(), credentials: 'include' });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -1001,7 +1006,7 @@ export async function getRoutingSuggestion(consultationId: string): Promise<any>
 }
 
 export async function getConsultationDetails(consultationId: string): Promise<any> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const res = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}`, {
     headers: getAuthHeaders(),
     credentials: 'include',
@@ -1016,7 +1021,7 @@ export async function getConsultationDetails(consultationId: string): Promise<an
 }
 
 export async function claimConsultationCase(consultationId: string, lockTtlMinutes = 15): Promise<any> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const res = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}/claim`, {
     method: 'POST',
     headers: {
@@ -1036,7 +1041,7 @@ export async function claimConsultationCase(consultationId: string, lockTtlMinut
 }
 
 export async function releaseConsultationCase(consultationId: string): Promise<any> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const res = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}/release`, {
     method: 'POST',
     headers: getAuthHeaders(),
@@ -1057,7 +1062,7 @@ export async function reassignConsultationCase(
   reason: string,
   targetDepartment?: string
 ): Promise<any> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const res = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}/reassign`, {
     method: 'POST',
     headers: {
@@ -1085,7 +1090,7 @@ export async function overrideUrgencyTier(
   newTier: string,
   reason: string
 ): Promise<any> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const res = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}/override-tier`, {
     method: 'POST',
     headers: {
@@ -1108,7 +1113,7 @@ export async function overrideUrgencyTier(
 }
 
 export async function toggleDoctorAvailability(isOnDuty: boolean): Promise<any> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const res = await fetch(`${baseUrl}/api/v1/doctor/availability`, {
     method: 'POST',
     headers: {
@@ -1128,7 +1133,7 @@ export async function toggleDoctorAvailability(isOnDuty: boolean): Promise<any> 
 }
 
 export async function getDoctorRoster(department?: string, onDutyOnly = false): Promise<any> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const query = new URLSearchParams();
   if (department) query.append('department', department);
   if (onDutyOnly) query.append('on_duty_only', 'true');
@@ -1210,7 +1215,7 @@ export interface ActionRecord {
 }
 
 export async function recordConsultationAction(req: DoctorActionRequest): Promise<ActionRecord> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const res = await fetch(`${baseUrl}/api/v1/consultations/action`, {
     method: 'POST',
     headers: {
@@ -1230,7 +1235,7 @@ export async function recordConsultationAction(req: DoctorActionRequest): Promis
 }
 
 export async function getConsultationActions(consultationId: string): Promise<ActionRecord[]> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const baseUrl = getApiBaseUrl();
   const res = await fetch(`${baseUrl}/api/v1/consultations/${consultationId}/actions`, {
     headers: getAuthHeaders(),
     credentials: 'include',

@@ -226,6 +226,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+class NormalizePathMiddleware:
+    """Normalize request paths by collapsing multiple consecutive slashes (e.g. //api/ -> /api/)."""
+    def __init__(self, app_asgi):
+        self.app = app_asgi
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            path = scope.get("path", "")
+            if "//" in path:
+                scope["path"] = re.sub(r"/+", "/", path)
+                if "raw_path" in scope:
+                    scope["raw_path"] = scope["path"].encode("ascii")
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(NormalizePathMiddleware)
+
 # -- CORS: allow configured origins or local development origins --
 allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
 origins = [o.strip() for o in allowed_origins_env.split(",") if o.strip()] if allowed_origins_env else [
